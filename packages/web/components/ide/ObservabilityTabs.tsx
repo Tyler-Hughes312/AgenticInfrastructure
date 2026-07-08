@@ -110,7 +110,9 @@ export default function ObservabilityTabs({
               <div className="px-4 pt-3 shrink-0">
                 <StatusLog events={filteredEvents} />
                 <p className="text-xs text-charcoal-muted mb-2">
-                  Click an agent node to inspect logs, tools, code, and git activity.
+                  {config.agents.length === 0
+                    ? "Blank project canvas — the orchestrator will deploy sub-agents when you send a build task."
+                    : "Click an agent node to inspect logs, tools, code, and git activity."}
                 </p>
               </div>
               <div className="flex-1 min-h-0 px-4 pb-4">

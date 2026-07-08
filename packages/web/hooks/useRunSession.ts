@@ -13,6 +13,8 @@ function isCriticalEvent(e: RunEvent): boolean {
       e.event === "on_chain_start" ||
       e.event === "on_node_end" ||
       e.event === "on_node_start" ||
+      e.event === "on_chat_model_end" ||
+      e.event === "orchestrator_graph_updated" ||
       e.event === "error"
   );
 }

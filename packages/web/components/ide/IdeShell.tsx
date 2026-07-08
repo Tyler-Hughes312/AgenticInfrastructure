@@ -14,7 +14,7 @@ function IdeShellContent() {
   const runIdParam = searchParams.get("runId");
   const questionParam = searchParams.get("question");
   const autoStartedRef = useRef(false);
-  const { config, agentIds } = useOrchestrator();
+  const { config, agentIds, applyRemoteConfig, resetToDefault } = useOrchestrator();
 
   const session = useRunSession(runIdParam);
 
@@ -27,6 +27,19 @@ function IdeShellContent() {
       orchestratorConfig: config,
     });
   }, [questionParam, session.hasStarted, session.startTask, agentIds, config]);
+
+  // When the server auto-deploys a pipeline, mirror it onto the live graph canvas.
+  useEffect(() => {
+    for (let i = session.events.length - 1; i >= 0; i--) {
+      const e = session.events[i];
+      if (e.event !== "orchestrator_graph_updated") continue;
+      const next = (e.data as { config?: typeof config } | undefined)?.config;
+      if (next && Array.isArray(next.agents)) {
+        applyRemoteConfig(next);
+      }
+      break;
+    }
+  }, [session.events, applyRemoteConfig]);
 
   function handleSend(message: string) {
     const parsed = parseOrchestratorMessage(message, agentIds);
@@ -66,7 +79,10 @@ function IdeShellContent() {
           actualRunId={session.actualRunId}
           isRunning={session.isRunning}
           onSend={handleSend}
-          onReset={session.resetSession}
+          onReset={() => {
+            session.resetSession();
+            void resetToDefault();
+          }}
         />
       }
     />

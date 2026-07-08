@@ -4,8 +4,24 @@ import { eq } from "drizzle-orm";
 import { HumanMessage } from "@langchain/core/messages";
 import { env } from "../config.js";
 import { getCompiledGraph } from "../agents/graph.js";
-import type { OrchestratorGraphConfig } from "../agents/agent-registry.js";
-import { clearCompiledGraphCache, getGraphSchemaFromConfig } from "../agents/dynamic-graph.js";
+import {
+  normalizeOrchestratorConfig,
+  type OrchestratorGraphConfig,
+} from "../agents/agent-registry.js";
+import {
+  clearCompiledGraphCache,
+  getGraphSchemaFromConfig,
+  getSessionOrchestratorConfig,
+  setSessionOrchestratorConfig,
+} from "../agents/dynamic-graph.js";
+import {
+  buildSoftwareDevPipeline,
+  extractRepoHint,
+  isBlankWorkerGraph,
+  isLegacyLoopingConfig,
+  isSoftwareDevTask,
+} from "../agents/software-dev-pipeline.js";
+import { getModel } from "../models-llm.js";
 import { getAppDb } from "../db/app-db.js";
 import { runs, events, projects } from "../db/schema.js";
 import { isRemoteRepo, prepareWorkspace } from "../tools/git-ops.js";
@@ -13,6 +29,32 @@ import { setRunContext, clearRunContext } from "../tools/context.js";
 import { getLangfuseHandler, buildTraceUrl } from "../observability/langfuse.js";
 import { runWithCredentials } from "../credentials/store.js";
 import type { RunCredentials } from "../credentials/types.js";
+
+const GRAPH_RECURSION_LIMIT = 80;
+
+function resolveRunGraphConfig(
+  task: string,
+  repoUrl: string,
+  orchestratorConfig?: OrchestratorGraphConfig
+): { config: OrchestratorGraphConfig; deployed: boolean } {
+  let config = normalizeOrchestratorConfig(
+    orchestratorConfig ?? getSessionOrchestratorConfig()
+  );
+
+  const shouldDeployPipeline =
+    isSoftwareDevTask(task) &&
+    (isBlankWorkerGraph(config) || isLegacyLoopingConfig(config));
+
+  if (shouldDeployPipeline) {
+    const repoHint = extractRepoHint(task) || (isRemoteRepo(repoUrl) ? repoUrl : undefined);
+    config = buildSoftwareDevPipeline(repoHint);
+    setSessionOrchestratorConfig(config);
+    return { config, deployed: true };
+  }
+
+  setSessionOrchestratorConfig(config);
+  return { config, deployed: false };
+}
 
 type StreamListener = (event: Record<string, unknown>) => void;
 
@@ -121,9 +163,26 @@ async function executeRun(
 
   try {
     prepareWorkspace(repoUrl, workspaceDir);
-    // Rebuild graph with this run's credentials (do not reuse a model compiled without keys).
     clearCompiledGraphCache();
-    const graph = getCompiledGraph(orchestratorConfig, targetAgent);
+
+    const { config: graphConfig, deployed } = resolveRunGraphConfig(
+      task,
+      repoUrl,
+      orchestratorConfig
+    );
+
+    if (deployed) {
+      const schema = getGraphSchemaFromConfig(graphConfig);
+      await onAgentLensEvent?.({
+        run_id: runId,
+        event: "orchestrator_graph_updated",
+        name: "auto_deploy",
+        data: { config: graphConfig, schema, reason: "software_dev_pipeline" },
+        ts: Date.now(),
+        step_index: 0,
+      });
+    }
+
     const handler = getLangfuseHandler(runId, projectId);
     const launchHint = targetAgent ? `[Orchestrator launch @${targetAgent}] ` : "";
     const input = { messages: [new HumanMessage(launchHint + task)] };
@@ -139,28 +198,57 @@ async function executeRun(
       },
       callbacks: handler ? [handler] : [],
       signal: controller.signal,
+      recursionLimit: GRAPH_RECURSION_LIMIT,
     };
 
     let githubPrUrl: string | undefined;
     let stepIndex = 0;
     const traceId = (handler as { last_trace_id?: string } | null)?.last_trace_id;
 
-    for await (const ev of graph.streamEvents(input, { ...config, version: "v2" })) {
-      const raw = ev as Record<string, unknown>;
-      const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
-      await onAgentLensEvent?.(agentLensEv);
+    // Blank canvas Q&A: answer directly without a worker graph.
+    if (isBlankWorkerGraph(graphConfig)) {
+      const model = getModel(false);
+      const reply = await model.invoke(input.messages, config);
+      const content =
+        typeof reply.content === "string"
+          ? reply.content
+          : Array.isArray(reply.content)
+            ? reply.content.map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? "")).join("")
+            : String(reply.content ?? "");
 
-      const mapped = mapStreamEvent(raw as { event: string; name?: string });
-      if (mapped) {
-        emit(runId, mapped);
-        await persistEvent(runId, mapped.type, mapped);
-      }
-      if (raw.event === "on_chain_end") stepIndex += 1;
+      await onAgentLensEvent?.({
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 0,
+      });
+    } else {
+      const graph = getCompiledGraph(graphConfig, targetAgent);
 
-      if (raw.event === "on_tool_end" && raw.name === "open_pull_request") {
-        const output = (raw.data as { output?: string } | undefined)?.output;
-        if (typeof output === "string" && output.startsWith("http")) {
-          githubPrUrl = output;
+      for await (const ev of graph.streamEvents(input, {
+        ...config,
+        version: "v2",
+        recursionLimit: GRAPH_RECURSION_LIMIT,
+      })) {
+        const raw = ev as Record<string, unknown>;
+        const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
+        await onAgentLensEvent?.(agentLensEv);
+
+        const mapped = mapStreamEvent(raw as { event: string; name?: string });
+        if (mapped) {
+          emit(runId, mapped);
+          await persistEvent(runId, mapped.type, mapped);
+        }
+        if (raw.event === "on_chain_end") stepIndex += 1;
+
+        if (raw.event === "on_tool_end" && raw.name === "open_pull_request") {
+          const output = (raw.data as { output?: string } | undefined)?.output;
+          if (typeof output === "string" && output.startsWith("http")) {
+            githubPrUrl = output;
+          }
         }
       }
     }

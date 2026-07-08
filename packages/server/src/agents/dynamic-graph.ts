@@ -69,6 +69,12 @@ export function getCompiledGraphFromConfig(
     .filter((a) => a.id !== "supervisor")
     .map((agent) => buildWorkerFromConfig(agent));
 
+  if (!workers.length) {
+    throw new Error(
+      "NO_WORKERS: blank canvas has no sub-agents. Auto-deploy a pipeline for software tasks, or ask a question for a direct reply."
+    );
+  }
+
   const supervisor = createSupervisor({
     agents: workers,
     llm: getModelForAgent(cfg.supervisorModel),

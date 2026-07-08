@@ -2,11 +2,11 @@ import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { shellTool } from "../tools/shell.js";
 import { readFile, editFile } from "../tools/file-editor.js";
-import { gitDiff, gitCommit } from "../tools/git-ops.js";
+import { gitDiff, gitCommit, gitPush } from "../tools/git-ops.js";
 import { openPullRequest } from "../tools/github-pr.js";
 import { manageMemory, searchMemory } from "../memory/tools.js";
 import { getModelForAgent } from "../models-llm.js";
-import { AGENT_ROUTING_RULES, type AgentRoutingRule } from "./routing-policy.js";
+import type { AgentRoutingRule } from "./routing-policy.js";
 
 export const AVAILABLE_TOOL_NAMES = [
   "shell",
@@ -14,6 +14,7 @@ export const AVAILABLE_TOOL_NAMES = [
   "edit_file",
   "git_diff",
   "git_commit",
+  "git_push",
   "open_pull_request",
   "manage_memory",
   "search_memory",
@@ -27,6 +28,7 @@ const TOOL_MAP: Record<ToolName, StructuredToolInterface> = {
   edit_file: editFile,
   git_diff: gitDiff,
   git_commit: gitCommit,
+  git_push: gitPush,
   open_pull_request: openPullRequest,
   manage_memory: manageMemory,
   search_memory: searchMemory,
@@ -98,24 +100,11 @@ export function toRoutingRule(agent: CustomAgentConfig): AgentRoutingRule {
   };
 }
 
+/** Blank project canvas — supervisor only until a task auto-deploys workers. */
 export function getDefaultOrchestratorConfig(): OrchestratorGraphConfig {
   return {
-    agents: AGENT_ROUTING_RULES.map((rule, i) => ({
-      id: rule.id,
-      label: rule.label,
-      role: rule.role,
-      tools: rule.tools,
-      routesTo: rule.routesTo,
-      launchWhen: rule.launchWhen,
-      doNotLaunchWhen: rule.doNotLaunchWhen,
-      position: { x: 120, y: 80 + i * 140 },
-    })),
-    edges: [
-      { source: "supervisor", target: "coder" },
-      { source: "coder", target: "reviewer" },
-      { source: "reviewer", target: "pr_opener", label: "if approved" },
-      { source: "reviewer", target: "coder", label: "if changes needed" },
-    ],
+    agents: [],
+    edges: [],
     supervisorModel: undefined,
   };
 }
@@ -166,10 +155,14 @@ export function defaultFlowFromEdges(edges: GraphEdgeConfig[]): string[] {
 export function normalizeOrchestratorConfig(
   input?: Partial<OrchestratorGraphConfig> | null
 ): OrchestratorGraphConfig {
-  if (!input?.agents?.length) return getDefaultOrchestratorConfig();
+  if (!input) return getDefaultOrchestratorConfig();
+  const agents = input.agents ?? [];
   const edges = input.edges ?? [];
+  if (!agents.length) {
+    return { agents: [], edges: [], supervisorModel: input.supervisorModel };
+  }
   return {
-    agents: syncRoutesToFromEdges(input.agents, edges),
+    agents: syncRoutesToFromEdges(agents, edges),
     edges,
     supervisorModel: input.supervisorModel,
   };

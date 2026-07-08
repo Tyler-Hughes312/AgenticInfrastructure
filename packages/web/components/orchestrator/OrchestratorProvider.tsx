@@ -26,6 +26,7 @@ type OrchestratorContextValue = {
   availableModels: string[];
   loading: boolean;
   saveConfig: (next: OrchestratorGraphConfig) => Promise<void>;
+  applyRemoteConfig: (next: OrchestratorGraphConfig) => void;
   updateAgentPosition: (agentId: string, position: { x: number; y: number }) => void;
   addAgent: (agent: CustomAgentConfig) => Promise<void>;
   removeAgent: (agentId: string) => Promise<void>;
@@ -37,12 +38,23 @@ type OrchestratorContextValue = {
 
 const OrchestratorContext = createContext<OrchestratorContextValue | null>(null);
 
+function isLegacyLoopingConfig(config: OrchestratorGraphConfig): boolean {
+  const ids = new Set(config.agents.map((a) => a.id));
+  return ids.has("coder") && ids.has("reviewer") && ids.has("pr_opener");
+}
+
 function loadStoredConfig(): OrchestratorGraphConfig | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as OrchestratorGraphConfig;
+    const parsed = JSON.parse(raw) as OrchestratorGraphConfig;
+    // Drop the old coder⇄reviewer loop from prior defaults.
+    if (isLegacyLoopingConfig(parsed)) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -83,13 +95,15 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
         const remote = await fetchGraph();
         if (cancelled) return;
         const stored = loadStoredConfig();
-        const merged = stored?.agents?.length ? stored : remote.config;
+        // Prefer blank server default; only keep stored if user customized a non-legacy graph.
+        const merged =
+          stored && stored.agents.length > 0 && !isLegacyLoopingConfig(stored)
+            ? stored
+            : remote.config ?? { agents: [], edges: [] };
         setConfig(merged);
         setAvailableTools(remote.available_tools ?? []);
         storeConfig(merged);
-        if (stored?.agents?.length) {
-          await putGraph(merged);
-        }
+        await putGraph(merged);
       } catch (err) {
         console.error("Failed to load orchestrator graph:", err);
         const stored = loadStoredConfig();
@@ -107,6 +121,11 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
     const saved = await putGraph(next);
     setConfig(saved);
     storeConfig(saved);
+  }, []);
+
+  const applyRemoteConfig = useCallback((next: OrchestratorGraphConfig) => {
+    setConfig(next);
+    storeConfig(next);
   }, []);
 
   const updateAgentPosition = useCallback(
@@ -215,6 +234,7 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
       availableModels,
       loading,
       saveConfig,
+      applyRemoteConfig,
       updateAgentPosition,
       addAgent,
       removeAgent,
@@ -229,6 +249,7 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
       availableModels,
       loading,
       saveConfig,
+      applyRemoteConfig,
       updateAgentPosition,
       addAgent,
       removeAgent,

@@ -27,7 +27,7 @@ const agentSchema = z.object({
 });
 
 const graphSchema = z.object({
-  agents: z.array(agentSchema).min(1),
+  agents: z.array(agentSchema).default([]),
   edges: z.array(
     z.object({
       source: z.string(),
