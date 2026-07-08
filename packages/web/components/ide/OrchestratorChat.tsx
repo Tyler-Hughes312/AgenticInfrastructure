@@ -9,6 +9,8 @@ import {
   APPROVE_AND_PUBLISH_PROMPT,
   needsPublishApproval,
 } from "../../lib/pipeline-approval";
+import { parseGraphEditCommand, previewGraphEditMessage } from "../../lib/graph-edit";
+import { useOrchestrator } from "../orchestrator/OrchestratorProvider";
 import type { ChatMessage } from "../../lib/types/chat";
 
 import type { RunEvent, RunSessionStatus } from "../../lib/types/run";
@@ -39,8 +41,10 @@ export default function OrchestratorChat({
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showRouting, setShowRouting] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageIdRef = useRef(0);
+  const { config } = useOrchestrator();
 
   const onMessagesChange = useCallback(
     (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
@@ -63,6 +67,18 @@ export default function OrchestratorChat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (
+      last?.role === "assistant" &&
+      last.content.includes("Reply **yes**")
+    ) {
+      setPendingConfirmation(last.content);
+    } else {
+      setPendingConfirmation(null);
+    }
+  }, [messages]);
+
   function handleReset() {
     setMessages([]);
     setInput("");
@@ -83,16 +99,33 @@ export default function OrchestratorChat({
     if (!trimmed || isRunning) return;
 
     messageIdRef.current += 1;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `user-${messageIdRef.current}`,
-        role: "user",
-        content: trimmed,
-        ts: Date.now(),
-        runId: actualRunId ?? undefined,
-      },
-    ]);
+    const userMsg: ChatMessage = {
+      id: `user-${messageIdRef.current}`,
+      role: "user",
+      content: trimmed,
+      ts: Date.now(),
+      runId: actualRunId ?? undefined,
+    };
+
+    const edit = parseGraphEditCommand(trimmed);
+    if (edit) {
+      messageIdRef.current += 1;
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        {
+          id: `edit-${messageIdRef.current}`,
+          role: "status",
+          content: previewGraphEditMessage(config, edit),
+          ts: Date.now(),
+        },
+      ]);
+      setInput("");
+      onSend(trimmed);
+      return;
+    }
+
+    setMessages((prev) => [...prev, userMsg]);
     setInput("");
     onSend(trimmed);
   }
@@ -158,9 +191,11 @@ export default function OrchestratorChat({
           <div className="px-3 py-8 text-center">
             <p className="text-sm text-charcoal-muted mb-2">Chat with the orchestrator</p>
             <p className="text-xs text-charcoal-muted/70 break-words">
-              Describe a task or launch an agent with{" "}
-              <code className="text-charcoal-muted">@coder fix the bug</code> or{" "}
-              <code className="text-charcoal-muted">/launch reviewer check changes</code>.
+              Describe a task, or edit the graph:{" "}
+              <code className="text-charcoal-muted">add researcher</code>,{" "}
+              <code className="text-charcoal-muted">connect researcher → writer</code>,{" "}
+              <code className="text-charcoal-muted">remove publisher</code>,{" "}
+              <code className="text-charcoal-muted">rebuild graph for a 3-stage essay</code>.
               {agentIds.length > 1 && (
                 <>
                   {" "}
@@ -188,6 +223,35 @@ export default function OrchestratorChat({
             >
               Approve &amp; publish
             </button>
+          </div>
+        )}
+        {pendingConfirmation && !isRunning && (
+          <div className="rounded-lg border border-charcoal-accent/40 bg-charcoal-accent/10 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-charcoal-muted">
+              Confirm graph edit?
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingConfirmation(null);
+                  sendText("yes");
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-emerald-600 text-white hover:brightness-110"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingConfirmation(null);
+                  sendText("cancel");
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-charcoal-raised text-charcoal-muted hover:bg-charcoal-border"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
         <textarea
