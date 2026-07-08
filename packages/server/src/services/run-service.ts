@@ -6,6 +6,7 @@ import { env } from "../config.js";
 import { getCompiledGraph } from "../agents/graph.js";
 import {
   normalizeOrchestratorConfig,
+  type CustomAgentConfig,
   type OrchestratorGraphConfig,
 } from "../agents/agent-registry.js";
 import {
@@ -14,13 +15,13 @@ import {
   getSessionOrchestratorConfig,
   setSessionOrchestratorConfig,
 } from "../agents/dynamic-graph.js";
+import { applyGraphEdit, type GraphEditCommand } from "../agents/graph-edit.js";
+import { classifyMessageIntent } from "../agents/message-classifier.js";
 import {
-  buildSoftwareDevPipeline,
-  extractRepoHint,
-  isBlankWorkerGraph,
-  isLegacyLoopingConfig,
-  isSoftwareDevTask,
-} from "../agents/software-dev-pipeline.js";
+  designGraphFromPrompt,
+  synthesizeFinalChatAnswer,
+  repoHintFromTask,
+} from "../agents/design-graph-from-prompt.js";
 import { getModel } from "../models-llm.js";
 import { getAppDb } from "../db/app-db.js";
 import { runs, events, projects } from "../db/schema.js";
@@ -32,34 +33,75 @@ import type { RunCredentials } from "../credentials/types.js";
 
 const GRAPH_RECURSION_LIMIT = 80;
 
-function resolveRunGraphConfig(
-  task: string,
-  repoUrl: string,
+function resolveSessionConfig(
   orchestratorConfig?: OrchestratorGraphConfig
-): { config: OrchestratorGraphConfig; deployed: boolean } {
-  let config = normalizeOrchestratorConfig(
-    orchestratorConfig ?? getSessionOrchestratorConfig()
+): OrchestratorGraphConfig {
+  const incoming = normalizeOrchestratorConfig(orchestratorConfig);
+  const session = normalizeOrchestratorConfig(getSessionOrchestratorConfig());
+  // Prefer an explicit non-blank incoming config; otherwise use session.
+  const isBlank = (c: OrchestratorGraphConfig) => !c.agents.length;
+  return !isBlank(incoming) ? incoming : session;
+}
+
+function isConfirmation(text: string): boolean {
+  return /^\s*(yes|y|confirm|do\s+it|apply|ok|okay|sure|go|proceed|lgtm)\s*[.!?]?\s*$/i.test(
+    text
   );
+}
 
-  const shouldDeployPipeline =
-    isSoftwareDevTask(task) &&
-    (isBlankWorkerGraph(config) || isLegacyLoopingConfig(config));
+async function emitChatMessage(
+  runId: string,
+  content: string,
+  stepIndex: number,
+  onAgentLensEvent?: (event: Record<string, unknown>) => void | Promise<void>
+): Promise<void> {
+  await onAgentLensEvent?.({
+    run_id: runId,
+    event: "on_chat_model_end",
+    name: "supervisor",
+    data: { output: { content } },
+    metadata: { langgraph_node: "supervisor" },
+    ts: Date.now(),
+    step_index: stepIndex,
+  });
+}
 
-  if (shouldDeployPipeline) {
-    const repoHint = extractRepoHint(task) || (isRemoteRepo(repoUrl) ? repoUrl : undefined);
-    config = buildSoftwareDevPipeline(repoHint);
-    setSessionOrchestratorConfig(config);
-    return { config, deployed: true };
-  }
-
-  setSessionOrchestratorConfig(config);
-  return { config, deployed: false };
+async function emitGraphUpdated(
+  runId: string,
+  config: OrchestratorGraphConfig,
+  reason: string,
+  stepIndex: number,
+  onAgentLensEvent?: (event: Record<string, unknown>) => void | Promise<void>
+): Promise<void> {
+  const schema = getGraphSchemaFromConfig(config);
+  await onAgentLensEvent?.({
+    run_id: runId,
+    event: "orchestrator_graph_updated",
+    name: "graph_edit",
+    data: {
+      config,
+      schema,
+      reason,
+      deployed: true,
+      agent_ids: config.agents.map((a) => a.id),
+    },
+    ts: Date.now(),
+    step_index: stepIndex,
+  });
 }
 
 type StreamListener = (event: Record<string, unknown>) => void;
 
 const listeners = new Map<string, Set<StreamListener>>();
 const activeRuns = new Map<string, AbortController>();
+/**
+ * Stores pending NL graph-edit confirmations keyed by projectId.
+ * Cleared on apply, cancel, or when a new task_run starts.
+ */
+const pendingGraphEdits = new Map<
+  string,
+  { description: string; command: GraphEditCommand | null }
+>();
 const sessionWorkspaces = new Set<string>();
 
 export function releaseSessionWorkspace(runId: string): void {
@@ -165,19 +207,116 @@ async function executeRun(
     prepareWorkspace(repoUrl, workspaceDir);
     clearCompiledGraphCache();
 
-    const { config: graphConfig, deployed } = resolveRunGraphConfig(
-      task,
-      repoUrl,
-      orchestratorConfig
-    );
+    let graphConfig = resolveSessionConfig(orchestratorConfig);
 
-    if (deployed) {
+    // --- Intent classification ---
+    const intent = await classifyMessageIntent(task, graphConfig.agents);
+
+    // Pending confirmation check: user said "yes" to a pending NL edit.
+    const pending = pendingGraphEdits.get(projectId);
+    if (pending && isConfirmation(task)) {
+      pendingGraphEdits.delete(projectId);
+      if (pending.command) {
+        const edited = applyGraphEdit(graphConfig, pending.command);
+        graphConfig = edited.config;
+        setSessionOrchestratorConfig(graphConfig);
+        clearCompiledGraphCache();
+        await emitGraphUpdated(runId, graphConfig, "graph_edit_confirmed", 0, onAgentLensEvent);
+        await emitChatMessage(runId, edited.message, 1, onAgentLensEvent);
+      } else {
+        await emitChatMessage(
+          runId,
+          `Cancelled — I wasn't sure what to change. Try a more specific command.`,
+          0,
+          onAgentLensEvent
+        );
+      }
+      await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
+      emit(runId, { type: "run_completed", status: "completed" });
+      return;
+    }
+
+    // Graph edits (regex fast-path).
+    if (intent.kind === "graph_edit") {
+      const cmd = intent.command;
+
+      // rebuild requires async LLM call — handle specially.
+      if (cmd.type === "rebuild") {
+        const repoHint = repoHintFromTask(cmd.task, repoUrl);
+        const { config: freshConfig, summary } = await designGraphFromPrompt(cmd.task, repoHint);
+        setSessionOrchestratorConfig(freshConfig);
+        clearCompiledGraphCache();
+        graphConfig = freshConfig;
+        await emitGraphUpdated(runId, graphConfig, "graph_rebuild", 0, onAgentLensEvent);
+        await emitChatMessage(runId, `Graph rebuilt: ${summary}`, 1, onAgentLensEvent);
+        await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
+        emit(runId, { type: "run_completed", status: "completed" });
+        return;
+      }
+
+      const edited = applyGraphEdit(graphConfig, cmd);
+      graphConfig = edited.config;
+      setSessionOrchestratorConfig(graphConfig);
+      clearCompiledGraphCache();
+      await emitGraphUpdated(runId, graphConfig, `graph_edit_${cmd.type}`, 0, onAgentLensEvent);
+      await emitChatMessage(runId, edited.message, 1, onAgentLensEvent);
+      await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
+      emit(runId, { type: "run_completed", status: "completed" });
+      return;
+    }
+
+    // NL graph edit — ask for confirmation.
+    if (intent.kind === "graph_edit_pending") {
+      pendingGraphEdits.set(projectId, { description: intent.description, command: intent.command });
+      const confirmMsg = `I'd ${intent.description}. Reply **yes** to apply or anything else to cancel.`;
+      await emitChatMessage(runId, confirmMsg, 0, onAgentLensEvent);
+      await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
+      emit(runId, { type: "run_completed", status: "completed" });
+      return;
+    }
+
+    // Q&A — answer directly, no workers.
+    if (intent.kind === "q_and_a") {
+      const model = getModel(false);
+      const reply = await model.invoke([new HumanMessage(task)]);
+      const content =
+        typeof reply.content === "string"
+          ? reply.content
+          : Array.isArray(reply.content)
+            ? reply.content
+                .map((c) =>
+                  typeof c === "string" ? c : (c as { text?: string }).text ?? ""
+                )
+                .join("")
+            : String(reply.content ?? "");
+      await emitChatMessage(runId, content, 0, onAgentLensEvent);
+      await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
+      emit(runId, { type: "run_completed", status: "completed" });
+      return;
+    }
+
+    // task_run — design fresh graph with LLM, then run it.
+    pendingGraphEdits.delete(projectId); // clear any stale pending edit
+    const repoHint = repoHintFromTask(task, repoUrl);
+    const { config: designedConfig } = await designGraphFromPrompt(task, repoHint);
+    graphConfig = designedConfig;
+    setSessionOrchestratorConfig(graphConfig);
+    clearCompiledGraphCache();
+
+    // Always push the active graph to the client so the canvas stays in sync.
+    {
       const schema = getGraphSchemaFromConfig(graphConfig);
       await onAgentLensEvent?.({
         run_id: runId,
         event: "orchestrator_graph_updated",
         name: "auto_deploy",
-        data: { config: graphConfig, schema, reason: "software_dev_pipeline" },
+        data: {
+          config: graphConfig,
+          schema,
+          reason: "task_run_design",
+          deployed: true,
+          agent_ids: graphConfig.agents.map((a) => a.id),
+        },
         ts: Date.now(),
         step_index: 0,
       });
@@ -205,51 +344,53 @@ async function executeRun(
     let stepIndex = 0;
     const traceId = (handler as { last_trace_id?: string } | null)?.last_trace_id;
 
-    // Blank canvas Q&A: answer directly without a worker graph.
-    if (isBlankWorkerGraph(graphConfig)) {
-      const model = getModel(false);
-      const reply = await model.invoke(input.messages, config);
-      const content =
-        typeof reply.content === "string"
-          ? reply.content
-          : Array.isArray(reply.content)
-            ? reply.content.map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? "")).join("")
-            : String(reply.content ?? "");
+    const graph = getCompiledGraph(graphConfig, targetAgent);
+    const pipelineNotes: string[] = [];
 
-      await onAgentLensEvent?.({
-        run_id: runId,
-        event: "on_chat_model_end",
-        name: "supervisor",
-        data: { output: { content } },
-        metadata: { langgraph_node: "supervisor" },
-        ts: Date.now(),
-        step_index: 0,
-      });
-    } else {
-      const graph = getCompiledGraph(graphConfig, targetAgent);
+    for await (const ev of graph.streamEvents(input, {
+      ...config,
+      version: "v2",
+      recursionLimit: GRAPH_RECURSION_LIMIT,
+    })) {
+      const raw = ev as Record<string, unknown>;
+      const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
+      await onAgentLensEvent?.(agentLensEv);
 
-      for await (const ev of graph.streamEvents(input, {
-        ...config,
-        version: "v2",
-        recursionLimit: GRAPH_RECURSION_LIMIT,
-      })) {
-        const raw = ev as Record<string, unknown>;
-        const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
-        await onAgentLensEvent?.(agentLensEv);
+      // Collect terminal agent messages for post-run synthesis.
+      if (
+        raw.event === "on_chat_model_end" &&
+        typeof (raw.metadata as Record<string, unknown>)?.langgraph_node === "string" &&
+        (raw.metadata as Record<string, unknown>).langgraph_node !== "supervisor"
+      ) {
+        const msgContent = (raw.data as Record<string, unknown>)?.output as Record<string, unknown> | undefined;
+        const text =
+          typeof msgContent?.content === "string"
+            ? msgContent.content
+            : "";
+        if (text) pipelineNotes.push(text);
+      }
 
-        const mapped = mapStreamEvent(raw as { event: string; name?: string });
-        if (mapped) {
-          emit(runId, mapped);
-          await persistEvent(runId, mapped.type, mapped);
+      const mapped = mapStreamEvent(raw as { event: string; name?: string });
+      if (mapped) {
+        emit(runId, mapped);
+        await persistEvent(runId, mapped.type, mapped);
+      }
+      if (raw.event === "on_chain_end") stepIndex += 1;
+
+      if (raw.event === "on_tool_end" && raw.name === "open_pull_request") {
+        const output = (raw.data as { output?: string } | undefined)?.output;
+        if (typeof output === "string" && output.startsWith("http")) {
+          githubPrUrl = output;
         }
-        if (raw.event === "on_chain_end") stepIndex += 1;
+      }
+    }
 
-        if (raw.event === "on_tool_end" && raw.name === "open_pull_request") {
-          const output = (raw.data as { output?: string } | undefined)?.output;
-          if (typeof output === "string" && output.startsWith("http")) {
-            githubPrUrl = output;
-          }
-        }
+    // Post-run: synthesize final chat answer when deliverable mode includes chat.
+    const dm = graphConfig.deliverableMode;
+    if (dm?.type === "chat" || dm?.type === "both") {
+      if (pipelineNotes.length > 0) {
+        const finalAnswer = await synthesizeFinalChatAnswer(task, pipelineNotes.join("\n\n---\n\n"));
+        await emitChatMessage(runId, finalAnswer, stepIndex + 1, onAgentLensEvent);
       }
     }
 
@@ -384,6 +525,183 @@ export async function* streamFollowUpToRun(
     .where(eq(projects.id, run.projectId))
     .limit(1);
   if (!project) throw new Error("Project not found");
+
+  // --- Pending confirmation ---
+  const pending2 = pendingGraphEdits.get(run.projectId);
+  if (pending2 && isConfirmation(task)) {
+    pendingGraphEdits.delete(run.projectId);
+    const base2 = normalizeOrchestratorConfig(
+      orchestratorConfig ?? getSessionOrchestratorConfig()
+    );
+    if (pending2.command) {
+      const edited2 = applyGraphEdit(base2, pending2.command);
+      setSessionOrchestratorConfig(edited2.config);
+      clearCompiledGraphCache();
+      const schema2 = getGraphSchemaFromConfig(edited2.config);
+      yield {
+        run_id: runId,
+        event: "orchestrator_graph_updated",
+        name: "graph_edit",
+        data: {
+          config: edited2.config,
+          schema: schema2,
+          reason: "graph_edit_confirmed",
+          deployed: true,
+          agent_ids: edited2.config.agents.map((a: CustomAgentConfig) => a.id),
+        },
+        ts: Date.now(),
+        step_index: 0,
+      };
+      yield {
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content: edited2.message } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 1,
+      };
+    } else {
+      yield {
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content: "Cancelled." } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 0,
+      };
+    }
+    await db.update(runs).set({ status: "completed", error: null }).where(eq(runs.id, runId));
+    return;
+  }
+
+  // --- Intent classification ---
+  const base = normalizeOrchestratorConfig(
+    orchestratorConfig ?? getSessionOrchestratorConfig()
+  );
+  const intent2 = await classifyMessageIntent(task, base.agents);
+
+  if (intent2.kind === "graph_edit") {
+    const cmd2 = intent2.command;
+    if (cmd2.type === "rebuild") {
+      const { config: fresh, summary } = await designGraphFromPrompt(
+        cmd2.task,
+        repoHintFromTask(cmd2.task, project.repoUrl)
+      );
+      setSessionOrchestratorConfig(fresh);
+      clearCompiledGraphCache();
+      const schemaf = getGraphSchemaFromConfig(fresh);
+      yield {
+        run_id: runId,
+        event: "orchestrator_graph_updated",
+        name: "graph_edit",
+        data: {
+          config: fresh,
+          schema: schemaf,
+          reason: "graph_rebuild",
+          deployed: true,
+          agent_ids: fresh.agents.map((a: CustomAgentConfig) => a.id),
+        },
+        ts: Date.now(),
+        step_index: 0,
+      };
+      yield {
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content: `Graph rebuilt: ${summary}` } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 1,
+      };
+      await db.update(runs).set({ status: "completed", error: null }).where(eq(runs.id, runId));
+      return;
+    }
+
+    const edited3 = applyGraphEdit(base, cmd2);
+    setSessionOrchestratorConfig(edited3.config);
+    clearCompiledGraphCache();
+    const schema3 = getGraphSchemaFromConfig(edited3.config);
+    yield {
+      run_id: runId,
+      event: "orchestrator_graph_updated",
+      name: "graph_edit",
+      data: {
+        config: edited3.config,
+        schema: schema3,
+        reason: `graph_edit_${cmd2.type}`,
+        deployed: true,
+        agent_ids: edited3.config.agents.map((a: CustomAgentConfig) => a.id),
+      },
+      ts: Date.now(),
+      step_index: 0,
+    };
+    yield {
+      run_id: runId,
+      event: "on_chat_model_end",
+      name: "supervisor",
+      data: { output: { content: edited3.message } },
+      metadata: { langgraph_node: "supervisor" },
+      ts: Date.now(),
+      step_index: 1,
+    };
+    await db.update(runs).set({ status: "completed", error: null }).where(eq(runs.id, runId));
+    return;
+  }
+
+  if (intent2.kind === "graph_edit_pending") {
+    pendingGraphEdits.set(run.projectId, {
+      description: intent2.description,
+      command: intent2.command,
+    });
+    const confirmMsg2 = `I'd ${intent2.description}. Reply **yes** to apply or anything else to cancel.`;
+    yield {
+      run_id: runId,
+      event: "on_chat_model_end",
+      name: "supervisor",
+      data: { output: { content: confirmMsg2 } },
+      metadata: { langgraph_node: "supervisor" },
+      ts: Date.now(),
+      step_index: 0,
+    };
+    await db.update(runs).set({ status: "completed", error: null }).where(eq(runs.id, runId));
+    return;
+  }
+
+  if (intent2.kind === "q_and_a") {
+    const qModel = getModel(false);
+    const qReply = await qModel.invoke([new HumanMessage(task)]);
+    const qContent =
+      typeof qReply.content === "string"
+        ? qReply.content
+        : Array.isArray(qReply.content)
+          ? qReply.content
+              .map((c) => (typeof c === "string" ? c : (c as { text?: string }).text ?? ""))
+              .join("")
+          : String(qReply.content ?? "");
+    yield {
+      run_id: runId,
+      event: "on_chat_model_end",
+      name: "supervisor",
+      data: { output: { content: qContent } },
+      metadata: { langgraph_node: "supervisor" },
+      ts: Date.now(),
+      step_index: 0,
+    };
+    await db.update(runs).set({ status: "completed", error: null }).where(eq(runs.id, runId));
+    return;
+  }
+
+  // task_run: design fresh graph and fall through to the existing run code below.
+  pendingGraphEdits.delete(run.projectId);
+  const { config: freshForRun } = await designGraphFromPrompt(
+    task,
+    repoHintFromTask(task, project.repoUrl)
+  );
+  setSessionOrchestratorConfig(freshForRun);
+  clearCompiledGraphCache();
+  orchestratorConfig = freshForRun;
 
   const githubToken = credentials.githubToken ?? env.GITHUB_TOKEN ?? "";
   if (isRemoteRepo(project.repoUrl) && !githubToken) {
