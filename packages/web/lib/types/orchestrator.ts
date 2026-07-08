@@ -17,10 +17,16 @@ export type GraphEdgeConfig = {
   label?: string;
 };
 
+export type DeliverableMode =
+  | { type: "chat" }
+  | { type: "github"; pr?: boolean }
+  | { type: "both"; pr?: boolean };
+
 export type OrchestratorGraphConfig = {
   agents: CustomAgentConfig[];
   edges: GraphEdgeConfig[];
   supervisorModel?: string;
+  deliverableMode?: DeliverableMode;
 };
 
 export type OrchestratorGraphResponse = {

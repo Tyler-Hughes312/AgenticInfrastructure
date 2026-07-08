@@ -3,7 +3,7 @@ import {
   parseGraphEditCommand,
   applyGraphEdit,
 } from "./graph-edit.js";
-import type { OrchestratorGraphConfig } from "./agent-registry.js";
+import type { OrchestratorGraphConfig, DeliverableMode } from "./agent-registry.js";
 
 const baseConfig: OrchestratorGraphConfig = {
   agents: [
@@ -139,5 +139,23 @@ describe("applyGraphEdit - rename", () => {
     const agent = config.agents.find(a => a.id === "researcher");
     expect(agent?.label).toBe("Scout");
     expect(message).toContain("Scout");
+  });
+});
+
+describe("DeliverableMode type", () => {
+  it("OrchestratorGraphConfig accepts deliverableMode", () => {
+    const mode: DeliverableMode = { type: "chat" };
+    const cfg: OrchestratorGraphConfig = {
+      agents: [],
+      edges: [],
+      deliverableMode: mode,
+    };
+    expect(cfg.deliverableMode?.type).toBe("chat");
+  });
+
+  it("deliverableMode can be github with pr", () => {
+    const mode: DeliverableMode = { type: "github", pr: true };
+    const cfg: OrchestratorGraphConfig = { agents: [], edges: [], deliverableMode: mode };
+    expect(cfg.deliverableMode?.type).toBe("github");
   });
 });

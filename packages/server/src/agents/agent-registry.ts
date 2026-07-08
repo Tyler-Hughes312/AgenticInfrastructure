@@ -53,10 +53,16 @@ export type GraphEdgeConfig = {
   label?: string;
 };
 
+export type DeliverableMode =
+  | { type: "chat" }
+  | { type: "github"; pr?: boolean }
+  | { type: "both"; pr?: boolean };
+
 export type OrchestratorGraphConfig = {
   agents: CustomAgentConfig[];
   edges: GraphEdgeConfig[];
   supervisorModel?: string;
+  deliverableMode?: DeliverableMode;
 };
 
 function defaultPrompt(agent: CustomAgentConfig): string {
@@ -159,11 +165,17 @@ export function normalizeOrchestratorConfig(
   const agents = input.agents ?? [];
   const edges = input.edges ?? [];
   if (!agents.length) {
-    return { agents: [], edges: [], supervisorModel: input.supervisorModel };
+    return {
+      agents: [],
+      edges: [],
+      supervisorModel: input.supervisorModel,
+      deliverableMode: input.deliverableMode,
+    };
   }
   return {
     agents: syncRoutesToFromEdges(agents, edges),
     edges,
     supervisorModel: input.supervisorModel,
+    deliverableMode: input.deliverableMode,
   };
 }
