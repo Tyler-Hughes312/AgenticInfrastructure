@@ -1,0 +1,1 @@
+System Architecture Document: This document outlines the components and interactions of the agentic system.
