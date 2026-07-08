@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.env.local
+.workspaces/
+.copilot_token
+*.log
+.DS_Store

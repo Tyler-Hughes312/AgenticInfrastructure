@@ -1,0 +1,17 @@
+{
+  "name": "agentic-platform",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @agentic/server & npm run dev -w @agentic/web",
+    "dev:server": "npm run dev -w @agentic/server",
+    "dev:web": "npm run dev -w @agentic/web",
+    "build": "npm run build -w @agentic/server && npm run build -w @agentic/web",
+    "test": "npm run test -w @agentic/server"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

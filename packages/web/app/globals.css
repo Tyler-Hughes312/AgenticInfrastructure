@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --charcoal-bg: #1c1c1f;
+  --charcoal-surface: #2a2a2e;
+  --charcoal-raised: #323238;
+  --charcoal-border: #3f3f46;
+  --charcoal-text: #e4e4e7;
+  --charcoal-muted: #a1a1aa;
+  --charcoal-accent: #5b8def;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--charcoal-bg);
+  color: var(--charcoal-text);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
