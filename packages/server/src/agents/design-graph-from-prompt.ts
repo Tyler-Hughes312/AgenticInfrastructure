@@ -212,7 +212,11 @@ function minimalFallbackGraph(task: string): OrchestratorGraphConfig {
   const edges: GraphEdgeConfig[] = [
     { source: "supervisor", target: "lead_agent", label: "full request" },
   ];
-  return normalizeOrchestratorConfig({ agents: [agent], edges });
+  return normalizeOrchestratorConfig({
+    agents: [agent],
+    edges,
+    deliverableMode: wantsGit ? { type: "both", pr: true } : { type: "chat" },
+  });
 }
 
 const SYSTEM = `You design multi-agent orchestration graphs dynamically from the user's prompt.
