@@ -37,5 +37,18 @@ export function parseOrchestratorMessage(
     }
   }
 
+  // Human approve → publisher when that agent exists on the graph.
+  const approve =
+    /^(approve|lgtm|ship(\s+it)?|publish|open\s+(the\s+)?pr)(\s|[!.:,-]|$)/i.test(trimmed);
+  if (approve && ids.has("publisher")) {
+    return {
+      task:
+        trimmed.length > 20
+          ? trimmed
+          : "User approved. Open the PR / publish the current branch now.",
+      targetAgent: "publisher",
+    };
+  }
+
   return { task: trimmed };
 }

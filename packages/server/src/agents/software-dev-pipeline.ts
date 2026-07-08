@@ -41,9 +41,13 @@ export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphCo
       label: "Reviewer",
       role: "Reviews the diff once; may request at most one fix pass.",
       prompt:
-        "You are Reviewer. Inspect the git diff and key files. " +
-        "Either APPROVE (say clearly: APPROVED) or REQUEST CHANGES once with concrete feedback. " +
-        "You do not edit code. After one review decision, stop.",
+        "You are Reviewer. Inspect the git diff and key files. Prefer shipping progress over perfection. " +
+        "Unless there is a critical blocker (security hole, broken entrypoint, empty project), APPROVE. " +
+        "End your final message with exactly one of:\n" +
+        "DECISION: APPROVED\n" +
+        "or\n" +
+        "DECISION: REQUEST_CHANGES\n" +
+        "You do not edit code. After that decision line, stop.",
       tools: ["git_diff", "read_file"],
       routesTo: ["builder", "publisher"],
       launchWhen: ["Builder finished a pass."],
@@ -58,11 +62,15 @@ export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphCo
         "You are Publisher. " +
         `${repoLine} ` +
         "Commit if needed, push the branch, open a pull request, and return the PR URL. Then stop. " +
-        "If there is no remote repo configured, explain that clearly and stop.",
+        "If there is no remote repo configured, explain that clearly and stop. " +
+        "Do not wait for further human confirmation once you are invoked.",
       tools: ["git_diff", "git_commit", "git_push", "open_pull_request", "shell"],
       routesTo: [],
-      launchWhen: ["Reviewer approved, or user asked to ship/publish."],
-      doNotLaunchWhen: ["Reviewer requested changes that are not fixed yet."],
+      launchWhen: [
+        "Reviewer ended with DECISION: APPROVED.",
+        "User said approve, ship, publish, or open the PR.",
+      ],
+      doNotLaunchWhen: ["Reviewer ended with DECISION: REQUEST_CHANGES and builder has not fixed yet."],
       position: { x: 80, y: 580 },
     },
   ];
@@ -139,7 +147,9 @@ export const SOFTWARE_DEV_SUPERVISOR_RULES = [
   "You are the orchestrator. Prefer transferring to sub-agents over solving large builds yourself.",
   "Default flow: planner → builder → reviewer → publisher.",
   "Transfer to each stage AT MOST ONCE per user turn, except reviewer may send builder ONE fix pass only.",
-  "Never bounce endlessly between builder and reviewer. After one fix pass, go to publisher or END.",
+  "CRITICAL: When reviewer returns DECISION: APPROVED (or clearly approves), you MUST immediately transfer to publisher in the SAME turn. Do NOT wait for the human user to approve.",
+  "If the user message is approve / ship / publish / open pr / LGTM, transfer straight to publisher.",
+  "Never bounce endlessly between builder and reviewer. After one fix pass + re-review, go to publisher or END.",
   "If the user only asked a question (no build), answer briefly yourself and END — do not deploy loops.",
   "When publisher returns a PR URL (or explains no repo), END immediately.",
   "Do not re-call planner after the plan is done.",

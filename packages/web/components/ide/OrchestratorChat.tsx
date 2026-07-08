@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChatMessageBubble from "./ChatMessage";
 import SupervisorRoutingPanel from "../SupervisorRoutingPanel";
 import { useOrchestratorChat } from "../../hooks/useOrchestratorChat";
 import { setChatPanelOpen } from "../../lib/ide-chat-panel";
+import {
+  APPROVE_AND_PUBLISH_PROMPT,
+  needsPublishApproval,
+} from "../../lib/pipeline-approval";
 import type { ChatMessage } from "../../lib/types/chat";
 
 import type { RunEvent, RunSessionStatus } from "../../lib/types/run";
@@ -65,9 +69,18 @@ export default function OrchestratorChat({
     onReset();
   }
 
-  function handleSend() {
-    const text = input.trim();
-    if (!text || isRunning) return;
+  const showApprove = useMemo(
+    () =>
+      !isRunning &&
+      status !== "idle" &&
+      agentIds.includes("publisher") &&
+      needsPublishApproval(events),
+    [isRunning, status, agentIds, events]
+  );
+
+  function sendText(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || isRunning) return;
 
     messageIdRef.current += 1;
     setMessages((prev) => [
@@ -75,13 +88,21 @@ export default function OrchestratorChat({
       {
         id: `user-${messageIdRef.current}`,
         role: "user",
-        content: text,
+        content: trimmed,
         ts: Date.now(),
         runId: actualRunId ?? undefined,
       },
     ]);
     setInput("");
-    onSend(text);
+    onSend(trimmed);
+  }
+
+  function handleSend() {
+    sendText(input);
+  }
+
+  function handleApproveAndPublish() {
+    sendText(APPROVE_AND_PUBLISH_PROMPT);
   }
 
   const statusDot =
@@ -153,10 +174,25 @@ export default function OrchestratorChat({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-charcoal-border p-3 bg-charcoal-surface">
+      <div className="shrink-0 border-t border-charcoal-border p-3 bg-charcoal-surface space-y-2">
+        {showApprove && (
+          <div className="rounded-lg border border-charcoal-accent/40 bg-charcoal-accent/10 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-charcoal-muted">
+              Review finished — publisher is waiting. Approve to ship (commit / push / PR).
+            </p>
+            <button
+              type="button"
+              onClick={handleApproveAndPublish}
+              disabled={isRunning}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md bg-emerald-600 text-white hover:brightness-110 disabled:opacity-40"
+            >
+              Approve &amp; publish
+            </button>
+          </div>
+        )}
         <textarea
           className="w-full box-border bg-charcoal-raised border border-charcoal-border rounded-xl px-3 py-2.5 text-sm text-charcoal-text placeholder:text-charcoal-muted/60 resize-none focus:outline-none focus:ring-2 focus:ring-charcoal-accent/40 focus:border-charcoal-accent/50 break-words"
-          placeholder="Ask the orchestrator or @agent task..."
+          placeholder='Ask the orchestrator, or type "approve" to ship…'
           rows={3}
           value={input}
           onChange={(e) => setInput(e.target.value)}
