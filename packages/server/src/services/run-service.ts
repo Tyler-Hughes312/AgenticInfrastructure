@@ -238,6 +238,7 @@ async function executeRun(
 
     // Graph edits (regex fast-path).
     if (intent.kind === "graph_edit") {
+      pendingGraphEdits.delete(projectId); // clear any stale pending edit
       const cmd = intent.command;
 
       // rebuild requires async LLM call — handle specially.
@@ -267,6 +268,7 @@ async function executeRun(
 
     // NL graph edit — ask for confirmation.
     if (intent.kind === "graph_edit_pending") {
+      pendingGraphEdits.delete(projectId); // clear any stale pending edit
       pendingGraphEdits.set(projectId, { description: intent.description, command: intent.command });
       const confirmMsg = `I'd ${intent.description}. Reply **yes** to apply or anything else to cancel.`;
       await emitChatMessage(runId, confirmMsg, 0, onAgentLensEvent);
@@ -277,6 +279,7 @@ async function executeRun(
 
     // Q&A — answer directly, no workers.
     if (intent.kind === "q_and_a") {
+      pendingGraphEdits.delete(projectId); // clear any stale pending edit
       const model = getModel(false);
       const reply = await model.invoke([new HumanMessage(task)]);
       const content =
@@ -583,6 +586,7 @@ export async function* streamFollowUpToRun(
   const intent2 = await classifyMessageIntent(task, base.agents);
 
   if (intent2.kind === "graph_edit") {
+    pendingGraphEdits.delete(run.projectId); // clear any stale pending edit
     const cmd2 = intent2.command;
     if (cmd2.type === "rebuild") {
       const { config: fresh, summary } = await designGraphFromPrompt(
@@ -651,6 +655,7 @@ export async function* streamFollowUpToRun(
   }
 
   if (intent2.kind === "graph_edit_pending") {
+    pendingGraphEdits.delete(run.projectId); // clear any stale pending edit
     pendingGraphEdits.set(run.projectId, {
       description: intent2.description,
       command: intent2.command,
@@ -670,6 +675,7 @@ export async function* streamFollowUpToRun(
   }
 
   if (intent2.kind === "q_and_a") {
+    pendingGraphEdits.delete(run.projectId); // clear any stale pending edit
     const qModel = getModel(false);
     const qReply = await qModel.invoke([new HumanMessage(task)]);
     const qContent =
@@ -764,11 +770,23 @@ export async function* streamFollowUpToRun(
       let githubPrUrl: string | undefined;
       let stepIndex = 0;
       const traceId = (handler as { last_trace_id?: string } | null)?.last_trace_id;
+      const pipelineNotes2: string[] = [];
 
       for await (const ev of graph.streamEvents(input, { ...config, version: "v2" })) {
         const raw = ev as Record<string, unknown>;
         const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
         push(agentLensEv);
+
+        // Collect terminal agent messages for post-run synthesis.
+        if (
+          raw.event === "on_chat_model_end" &&
+          typeof (raw.metadata as Record<string, unknown>)?.langgraph_node === "string" &&
+          (raw.metadata as Record<string, unknown>).langgraph_node !== "supervisor"
+        ) {
+          const msgContent = (raw.data as Record<string, unknown>)?.output as Record<string, unknown> | undefined;
+          const txt = typeof msgContent?.content === "string" ? msgContent.content : "";
+          if (txt) pipelineNotes2.push(txt);
+        }
 
         const mapped = mapStreamEvent(raw as { event: string; name?: string });
         if (mapped) {
@@ -783,6 +801,21 @@ export async function* streamFollowUpToRun(
             githubPrUrl = output;
           }
         }
+      }
+
+      // Post-run: synthesize final chat answer when deliverable mode includes chat.
+      const dm2 = orchestratorConfig?.deliverableMode;
+      if ((dm2?.type === "chat" || dm2?.type === "both") && pipelineNotes2.length > 0) {
+        const finalAnswer2 = await synthesizeFinalChatAnswer(task, pipelineNotes2.join("\n\n---\n\n"));
+        push({
+          run_id: runId,
+          event: "on_chat_model_end",
+          name: "supervisor",
+          data: { output: { content: finalAnswer2 } },
+          metadata: { langgraph_node: "supervisor" },
+          ts: Date.now(),
+          step_index: stepIndex + 1,
+        });
       }
 
       const langfuseTraceUrl = traceId ? buildTraceUrl(traceId) : undefined;
