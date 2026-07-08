@@ -68,9 +68,17 @@ export async function classifyMessageIntent(
     if (intent === "q_and_a") return { kind: "q_and_a" };
 
     if (intent === "graph_edit") {
-      // High-confidence NL edit: treat as confirmed (command is null — run-service
-      // must emit the description and let the user confirm manually for complex NL).
-      return { kind: "graph_edit_pending", description: desc, command: null, confidence };
+      // Try to parse the description into a structured command.
+      const parsedCmd = parseGraphEditCommand(desc);
+      if (confidence >= 0.8 && parsedCmd !== null) {
+        return { kind: "graph_edit", command: parsedCmd };
+      }
+      return {
+        kind: "graph_edit_pending",
+        description: desc,
+        command: parsedCmd, // non-null if description was parseable, null otherwise
+        confidence,
+      };
     }
 
     return { kind: "task_run" };

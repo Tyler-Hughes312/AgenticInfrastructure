@@ -209,10 +209,8 @@ async function executeRun(
 
     let graphConfig = resolveSessionConfig(orchestratorConfig);
 
-    // --- Intent classification ---
-    const intent = await classifyMessageIntent(task, graphConfig.agents);
-
     // Pending confirmation check: user said "yes" to a pending NL edit.
+    // Checked before classification to avoid wasting an LLM call on "yes" replies.
     const pending = pendingGraphEdits.get(projectId);
     if (pending && isConfirmation(task)) {
       pendingGraphEdits.delete(projectId);
@@ -236,8 +234,14 @@ async function executeRun(
       return;
     }
 
+    // --- Intent classification ---
+    const intent = await classifyMessageIntent(task, graphConfig.agents);
+
     // Graph edits (regex fast-path).
     if (intent.kind === "graph_edit") {
+      if (pendingGraphEdits.has(projectId)) {
+        await emitChatMessage(runId, "_(Cancelled pending graph edit.)_", 0, onAgentLensEvent);
+      }
       pendingGraphEdits.delete(projectId); // clear any stale pending edit
       const cmd = intent.command;
 
@@ -268,10 +272,16 @@ async function executeRun(
 
     // NL graph edit — ask for confirmation.
     if (intent.kind === "graph_edit_pending") {
+      const priorPending = pendingGraphEdits.get(projectId);
+      let stepOffset = 0;
+      if (priorPending) {
+        await emitChatMessage(runId, "_(Cancelled pending graph edit.)_", 0, onAgentLensEvent);
+        stepOffset = 1;
+      }
       pendingGraphEdits.delete(projectId); // clear any stale pending edit
       pendingGraphEdits.set(projectId, { description: intent.description, command: intent.command });
       const confirmMsg = `I'd ${intent.description}. Reply **yes** to apply or anything else to cancel.`;
-      await emitChatMessage(runId, confirmMsg, 0, onAgentLensEvent);
+      await emitChatMessage(runId, confirmMsg, stepOffset, onAgentLensEvent);
       await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
       emit(runId, { type: "run_completed", status: "completed" });
       return;
@@ -279,6 +289,12 @@ async function executeRun(
 
     // Q&A — answer directly, no workers.
     if (intent.kind === "q_and_a") {
+      const priorPendingQa = pendingGraphEdits.get(projectId);
+      let qaStepOffset = 0;
+      if (priorPendingQa) {
+        await emitChatMessage(runId, "_(Cancelled pending graph edit.)_", 0, onAgentLensEvent);
+        qaStepOffset = 1;
+      }
       pendingGraphEdits.delete(projectId); // clear any stale pending edit
       const model = getModel(false);
       const reply = await model.invoke([new HumanMessage(task)]);
@@ -292,13 +308,16 @@ async function executeRun(
                 )
                 .join("")
             : String(reply.content ?? "");
-      await emitChatMessage(runId, content, 0, onAgentLensEvent);
+      await emitChatMessage(runId, content, qaStepOffset, onAgentLensEvent);
       await db.update(runs).set({ status: "completed", completedAt: new Date() }).where(eq(runs.id, runId));
       emit(runId, { type: "run_completed", status: "completed" });
       return;
     }
 
     // task_run — design fresh graph with LLM, then run it.
+    if (pendingGraphEdits.has(projectId)) {
+      await emitChatMessage(runId, "_(Cancelled pending graph edit.)_", 0, onAgentLensEvent);
+    }
     pendingGraphEdits.delete(projectId); // clear any stale pending edit
     const repoHint = repoHintFromTask(task, repoUrl);
     const { config: designedConfig } = await designGraphFromPrompt(task, repoHint);
@@ -586,6 +605,17 @@ export async function* streamFollowUpToRun(
   const intent2 = await classifyMessageIntent(task, base.agents);
 
   if (intent2.kind === "graph_edit") {
+    if (pendingGraphEdits.has(run.projectId)) {
+      yield {
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content: "_(Cancelled pending graph edit.)_" } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 0,
+      };
+    }
     pendingGraphEdits.delete(run.projectId); // clear any stale pending edit
     const cmd2 = intent2.command;
     if (cmd2.type === "rebuild") {
@@ -655,6 +685,17 @@ export async function* streamFollowUpToRun(
   }
 
   if (intent2.kind === "graph_edit_pending") {
+    if (pendingGraphEdits.has(run.projectId)) {
+      yield {
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content: "_(Cancelled pending graph edit.)_" } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 0,
+      };
+    }
     pendingGraphEdits.delete(run.projectId); // clear any stale pending edit
     pendingGraphEdits.set(run.projectId, {
       description: intent2.description,
@@ -675,6 +716,17 @@ export async function* streamFollowUpToRun(
   }
 
   if (intent2.kind === "q_and_a") {
+    if (pendingGraphEdits.has(run.projectId)) {
+      yield {
+        run_id: runId,
+        event: "on_chat_model_end",
+        name: "supervisor",
+        data: { output: { content: "_(Cancelled pending graph edit.)_" } },
+        metadata: { langgraph_node: "supervisor" },
+        ts: Date.now(),
+        step_index: 0,
+      };
+    }
     pendingGraphEdits.delete(run.projectId); // clear any stale pending edit
     const qModel = getModel(false);
     const qReply = await qModel.invoke([new HumanMessage(task)]);
@@ -700,6 +752,17 @@ export async function* streamFollowUpToRun(
   }
 
   // task_run: design fresh graph and fall through to the existing run code below.
+  if (pendingGraphEdits.has(run.projectId)) {
+    yield {
+      run_id: runId,
+      event: "on_chat_model_end",
+      name: "supervisor",
+      data: { output: { content: "_(Cancelled pending graph edit.)_" } },
+      metadata: { langgraph_node: "supervisor" },
+      ts: Date.now(),
+      step_index: 0,
+    };
+  }
   pendingGraphEdits.delete(run.projectId);
   const { config: freshForRun } = await designGraphFromPrompt(
     task,
