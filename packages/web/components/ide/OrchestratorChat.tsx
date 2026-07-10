@@ -11,8 +11,8 @@ import {
 } from "../../lib/pipeline-approval";
 import { parseGraphEditCommand, previewGraphEditMessage } from "../../lib/graph-edit";
 import { useOrchestrator } from "../orchestrator/OrchestratorProvider";
+import WorkspaceOutputsStrip from "./WorkspaceOutputsStrip";
 import type { ChatMessage } from "../../lib/types/chat";
-
 import type { RunEvent, RunSessionStatus } from "../../lib/types/run";
 
 type OrchestratorChatProps = {
@@ -23,8 +23,16 @@ type OrchestratorChatProps = {
   error: string | null;
   actualRunId: string | null;
   isRunning: boolean;
+  initialMessages?: ChatMessage[];
+  onMessagesChange?: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  sessionId?: string | null;
   onSend: (message: string) => void;
-  onReset: () => void;
+  /** Clear chat messages only — keeps graph and run session. */
+  onClearChat?: () => void;
+  /** Reset to blank canvas + new chat session. */
+  onNewGraph?: () => void;
+  /** @deprecated use onClearChat */
+  onReset?: () => void;
 };
 
 export default function OrchestratorChat({
@@ -35,22 +43,40 @@ export default function OrchestratorChat({
   error,
   actualRunId,
   isRunning,
+  initialMessages = [],
+  onMessagesChange,
+  sessionId,
   onSend,
+  onClearChat,
+  onNewGraph,
   onReset,
 }: OrchestratorChatProps) {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [showRouting, setShowRouting] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageIdRef = useRef(0);
   const { config } = useOrchestrator();
 
-  const onMessagesChange = useCallback(
+  const prevSessionRef = useRef(sessionId);
+  useEffect(() => {
+    if (prevSessionRef.current !== sessionId) {
+      prevSessionRef.current = sessionId;
+      setMessages(initialMessages);
+      messageIdRef.current = initialMessages.length;
+    }
+  }, [sessionId, initialMessages]);
+
+  const handleMessagesChange = useCallback(
     (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
-      setMessages(updater);
+      setMessages((prev) => {
+        const next = updater(prev);
+        onMessagesChange?.(next);
+        return next;
+      });
     },
-    []
+    [onMessagesChange]
   );
 
   useOrchestratorChat({
@@ -60,7 +86,7 @@ export default function OrchestratorChat({
     error,
     actualRunId,
     isRunning,
-    onMessagesChange,
+    onMessagesChange: handleMessagesChange,
   });
 
   useEffect(() => {
@@ -79,10 +105,23 @@ export default function OrchestratorChat({
     }
   }, [messages]);
 
-  function handleReset() {
-    setMessages([]);
+  function handleClearChat() {
     setInput("");
-    onReset();
+    setMessages([]);
+    onMessagesChange?.([]);
+    if (onClearChat) {
+      onClearChat();
+      return;
+    }
+    onReset?.();
+  }
+
+  function handleNewGraph() {
+    if (isRunning) return;
+    setInput("");
+    setMessages([]);
+    onMessagesChange?.([]);
+    onNewGraph?.();
   }
 
   const showApprove = useMemo(
@@ -110,22 +149,30 @@ export default function OrchestratorChat({
     const edit = parseGraphEditCommand(trimmed);
     if (edit) {
       messageIdRef.current += 1;
-      setMessages((prev) => [
-        ...prev,
-        userMsg,
-        {
-          id: `edit-${messageIdRef.current}`,
-          role: "status",
-          content: previewGraphEditMessage(config, edit),
-          ts: Date.now(),
-        },
-      ]);
+      setMessages((prev) => {
+        const next = [
+          ...prev,
+          userMsg,
+          {
+            id: `edit-${messageIdRef.current}`,
+            role: "status" as const,
+            content: previewGraphEditMessage(config, edit),
+            ts: Date.now(),
+          },
+        ];
+        onMessagesChange?.(next);
+        return next;
+      });
       setInput("");
       onSend(trimmed);
       return;
     }
 
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => {
+      const next = [...prev, userMsg];
+      onMessagesChange?.(next);
+      return next;
+    });
     setInput("");
     onSend(trimmed);
   }
@@ -172,10 +219,20 @@ export default function OrchestratorChat({
           </button>
           <button
             type="button"
-            onClick={handleReset}
+            onClick={handleClearChat}
             className="text-xs text-charcoal-muted hover:text-charcoal-text px-2 py-1 rounded hover:bg-charcoal-raised"
+            title="Clear chat messages only"
           >
-            New chat
+            Clear chat
+          </button>
+          <button
+            type="button"
+            onClick={handleNewGraph}
+            disabled={isRunning}
+            className="text-xs text-charcoal-muted hover:text-charcoal-text px-2 py-1 rounded hover:bg-charcoal-raised disabled:opacity-40"
+            title="Blank canvas and new session"
+          >
+            New graph
           </button>
         </div>
       </header>
@@ -210,6 +267,7 @@ export default function OrchestratorChat({
       </div>
 
       <div className="shrink-0 border-t border-charcoal-border p-3 bg-charcoal-surface space-y-2">
+        <WorkspaceOutputsStrip sessionId={sessionId} refreshKey={actualRunId ?? status} />
         {showApprove && (
           <div className="rounded-lg border border-charcoal-accent/40 bg-charcoal-accent/10 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-charcoal-muted">

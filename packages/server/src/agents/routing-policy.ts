@@ -10,7 +10,7 @@ export interface AgentRoutingRule {
   routesTo: string[];
 }
 
-/** Kept for API / docs; live runs start blank and auto-deploy the software-dev pipeline. */
+/** Kept for API / docs; live graph structure is designed by the LLM at runtime. */
 export const AGENT_ROUTING_RULES: AgentRoutingRule[] = [
   {
     id: "planner",
@@ -45,7 +45,7 @@ export const AGENT_ROUTING_RULES: AgentRoutingRule[] = [
     role: "Pushes and opens a PR.",
     launchWhen: ["Approved."],
     doNotLaunchWhen: [],
-    tools: ["git_commit", "git_push", "open_pull_request", "shell"],
+    tools: ["git_commit", "git_push", "create_github_repo", "init_git_repo", "open_pull_request", "shell"],
     routesTo: [],
   },
 ];
@@ -110,9 +110,11 @@ export function getRoutingPolicyForApi() {
       "open_pull_request",
       "manage_memory",
       "search_memory",
+      "publish_handoff",
+      "read_pipeline_context",
     ],
     model_formats: ["copilot:gpt-4o", "openai:gpt-4.1", "openai:gpt-4o"],
     blank_canvas: true,
-    auto_deploy: "software_dev_pipeline",
+    auto_deploy: "llm_graph_design",
   };
 }

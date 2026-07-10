@@ -12,6 +12,7 @@ import {
   setSessionOrchestratorConfig,
 } from "../agents/dynamic-graph.js";
 import { getRoutingPolicyForApi } from "../agents/routing-policy.js";
+import { getSkillCatalogForApi } from "../agents/skill-catalog.js";
 
 const agentSchema = z.object({
   id: z.string().min(1).regex(/^[a-z][a-z0-9_]*$/),
@@ -19,6 +20,7 @@ const agentSchema = z.object({
   role: z.string().min(1),
   prompt: z.string().optional(),
   tools: z.array(z.string()).min(1),
+  skills: z.array(z.string()).optional(),
   model: z.string().optional(),
   routesTo: z.array(z.string()).default([]),
   launchWhen: z.array(z.string()).optional(),
@@ -45,6 +47,7 @@ export async function orchestratorRoutes(app: FastifyInstance) {
       config,
       schema: getGraphSchemaFromConfig(config),
       available_tools: AVAILABLE_TOOL_NAMES,
+      available_skills: getSkillCatalogForApi(),
       routing: getRoutingPolicyForApi(),
     };
   });

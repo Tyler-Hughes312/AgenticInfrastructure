@@ -9,22 +9,22 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiUrl } from "../../app/api-client";
+import { fetchChatSession, saveChatSessionGraph } from "../../app/api-client";
 import { getAvailableModelOptions } from "../../lib/orchestrator-models";
 import type {
   CustomAgentConfig,
   GraphEdgeConfig,
   OrchestratorGraphConfig,
-  OrchestratorGraphResponse,
+  SkillDefinition,
 } from "../../lib/types/orchestrator";
-
-const STORAGE_KEY = "orchestrator-graph-config";
 
 type OrchestratorContextValue = {
   config: OrchestratorGraphConfig;
   availableTools: string[];
+  availableSkills: SkillDefinition[];
   availableModels: string[];
   loading: boolean;
+  sessionId: string | null;
   saveConfig: (next: OrchestratorGraphConfig) => Promise<void>;
   applyRemoteConfig: (next: OrchestratorGraphConfig) => void;
   updateAgentPosition: (agentId: string, position: { x: number; y: number }) => void;
@@ -38,94 +38,75 @@ type OrchestratorContextValue = {
 
 const OrchestratorContext = createContext<OrchestratorContextValue | null>(null);
 
+const BLANK_CONFIG: OrchestratorGraphConfig = { agents: [], edges: [] };
+
 function isLegacyLoopingConfig(config: OrchestratorGraphConfig): boolean {
   const ids = new Set(config.agents.map((a) => a.id));
   return ids.has("coder") && ids.has("reviewer") && ids.has("pr_opener");
 }
 
-function loadStoredConfig(): OrchestratorGraphConfig | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as OrchestratorGraphConfig;
-    // Drop the old coder⇄reviewer loop from prior defaults.
-    if (isLegacyLoopingConfig(parsed)) {
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function storeConfig(config: OrchestratorGraphConfig) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-}
-
-async function fetchGraph(): Promise<OrchestratorGraphResponse> {
-  const res = await fetch(apiUrl("/api/orchestrator/graph"));
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
-async function putGraph(config: OrchestratorGraphConfig): Promise<OrchestratorGraphConfig> {
-  const res = await fetch(apiUrl("/api/orchestrator/graph"), {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  const data = await res.json();
-  return data.config as OrchestratorGraphConfig;
-}
-
-export function OrchestratorProvider({ children }: { children: ReactNode }) {
-  const [config, setConfig] = useState<OrchestratorGraphConfig>({ agents: [], edges: [] });
+export function OrchestratorProvider({
+  children,
+  sessionId,
+  initialConfig,
+}: {
+  children: ReactNode;
+  sessionId: string | null;
+  initialConfig?: OrchestratorGraphConfig | null;
+}) {
+  const [config, setConfig] = useState<OrchestratorGraphConfig>(
+    initialConfig ?? BLANK_CONFIG
+  );
   const [availableTools, setAvailableTools] = useState<string[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<SkillDefinition[]>([]);
   const [loading, setLoading] = useState(true);
 
   const availableModels = useMemo(() => getAvailableModelOptions(), []);
 
   useEffect(() => {
+    if (!sessionId) {
+      setConfig(initialConfig ?? BLANK_CONFIG);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
+      setLoading(true);
       try {
-        const remote = await fetchGraph();
+        const remote = await fetchChatSession(sessionId);
         if (cancelled) return;
-        const stored = loadStoredConfig();
-        // Prefer blank server default; only keep stored if user customized a non-legacy graph.
-        const merged =
-          stored && stored.agents.length > 0 && !isLegacyLoopingConfig(stored)
-            ? stored
-            : remote.config ?? { agents: [], edges: [] };
-        setConfig(merged);
+        const next = remote.config ?? BLANK_CONFIG;
+        setConfig(isLegacyLoopingConfig(next) ? BLANK_CONFIG : next);
         setAvailableTools(remote.available_tools ?? []);
-        storeConfig(merged);
-        await putGraph(merged);
+        setAvailableSkills(remote.available_skills ?? []);
       } catch (err) {
-        console.error("Failed to load orchestrator graph:", err);
-        const stored = loadStoredConfig();
-        if (stored?.agents?.length) setConfig(stored);
+        console.error("Failed to load session graph:", err);
+        if (!cancelled && initialConfig) setConfig(initialConfig);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sessionId]);
 
-  const saveConfig = useCallback(async (next: OrchestratorGraphConfig) => {
-    const saved = await putGraph(next);
-    setConfig(saved);
-    storeConfig(saved);
-  }, []);
+  const saveConfig = useCallback(
+    async (next: OrchestratorGraphConfig) => {
+      if (!sessionId) {
+        setConfig(next);
+        return;
+      }
+      const saved = await saveChatSessionGraph(sessionId, next);
+      setConfig(saved);
+    },
+    [sessionId]
+  );
 
   const applyRemoteConfig = useCallback((next: OrchestratorGraphConfig) => {
     setConfig(next);
-    storeConfig(next);
   }, []);
 
   const updateAgentPosition = useCallback(
@@ -135,11 +116,11 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
           a.id === agentId ? { ...a, position } : a
         );
         const next = { ...prev, agents };
-        storeConfig(next);
+        if (sessionId) void saveChatSessionGraph(sessionId, next);
         return next;
       });
     },
-    []
+    [sessionId]
   );
 
   const addAgent = useCallback(
@@ -163,6 +144,7 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
         agents: config.agents.filter((a) => a.id !== agentId),
         edges: config.edges.filter((e) => e.source !== agentId && e.target !== agentId),
         supervisorModel: config.supervisorModel,
+        deliverableMode: config.deliverableMode,
       };
       await saveConfig(next);
     },
@@ -194,9 +176,7 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
         (e) => e.source === edge.source && e.target === edge.target
       );
       if (exists) return;
-      await saveConfig(
-        withSyncedRoutes({ ...config, edges: [...config.edges, edge] })
-      );
+      await saveConfig(withSyncedRoutes({ ...config, edges: [...config.edges, edge] }));
     },
     [config, saveConfig, withSyncedRoutes]
   );
@@ -214,13 +194,8 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
   );
 
   const resetToDefault = useCallback(async () => {
-    const res = await fetch(apiUrl("/api/orchestrator/reset"), { method: "POST" });
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    const next = data.config as OrchestratorGraphConfig;
-    setConfig(next);
-    storeConfig(next);
-  }, []);
+    await saveConfig(BLANK_CONFIG);
+  }, [saveConfig]);
 
   const agentIds = useMemo(
     () => ["supervisor", ...config.agents.map((a) => a.id)],
@@ -231,8 +206,10 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
     () => ({
       config,
       availableTools,
+      availableSkills,
       availableModels,
       loading,
+      sessionId,
       saveConfig,
       applyRemoteConfig,
       updateAgentPosition,
@@ -246,8 +223,10 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
     [
       config,
       availableTools,
+      availableSkills,
       availableModels,
       loading,
+      sessionId,
       saveConfig,
       applyRemoteConfig,
       updateAgentPosition,

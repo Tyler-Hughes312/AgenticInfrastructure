@@ -30,7 +30,7 @@ export type FileChangeRecord = {
 export type GitActivityRecord = {
   id: string;
   agent: string;
-  type: "diff" | "commit" | "pull_request";
+  type: "diff" | "commit" | "push" | "create_repo" | "pull_request";
   summary: string;
   detail?: string;
   url?: string;
@@ -44,22 +44,35 @@ export type AgentMetrics = {
   tokens: number;
 };
 
-const NODE_IDS = new Set<string>(CODING_AGENT_NODES);
+function agentIdSet(knownAgentIds?: string[]): Set<string> {
+  if (knownAgentIds?.length) {
+    return new Set(knownAgentIds.filter((id) => id !== "supervisor"));
+  }
+  return new Set<string>(CODING_AGENT_NODES.filter((id) => id !== "supervisor"));
+}
 
-export function getEventAgent(e: RunEvent): string | null {
+export function getEventAgent(e: RunEvent, knownAgentIds?: string[]): string | null {
+  const nodeIds = agentIdSet(knownAgentIds);
   const node = e.metadata?.langgraph_node;
-  if (typeof node === "string" && NODE_IDS.has(node)) return node;
-  if (e.name && NODE_IDS.has(e.name)) return e.name;
+  if (typeof node === "string" && nodeIds.has(node)) return node;
+  if (e.name && nodeIds.has(e.name)) return e.name;
+  // LangGraph worker nodes often appear as chain names matching agent id.
+  if (typeof node === "string" && node && node !== "supervisor" && knownAgentIds?.includes(node)) {
+    return node;
+  }
   return null;
 }
 
-export function attributeEventsToAgents(events: RunEvent[]): Record<string, RunEvent[]> {
+export function attributeEventsToAgents(
+  events: RunEvent[],
+  knownAgentIds?: string[]
+): Record<string, RunEvent[]> {
   const byAgent: Record<string, RunEvent[]> = {};
   let currentAgent: string | null = null;
   const stack: string[] = [];
 
   for (const e of events) {
-    const agent = getEventAgent(e);
+    const agent = getEventAgent(e, knownAgentIds);
 
     if (e.event === "on_chain_start" || e.event === "on_node_start") {
       if (agent) {
@@ -85,22 +98,36 @@ export function attributeEventsToAgents(events: RunEvent[]): Record<string, RunE
   return byAgent;
 }
 
-function parseToolInput(data: any): unknown {
-  return data?.input?.input ?? data?.input ?? data?.kwargs ?? data;
+function parseToolInput(data: unknown): unknown {
+  const d = data as { input?: { input?: unknown } | unknown; kwargs?: unknown } | undefined;
+  const inner = d?.input;
+  if (inner && typeof inner === "object" && inner !== null && "input" in inner) {
+    return (inner as { input?: unknown }).input;
+  }
+  return inner ?? d?.kwargs ?? data;
 }
 
-function parseToolOutput(data: any): unknown {
-  return data?.output?.output ?? data?.output ?? data;
+function parseToolOutput(data: unknown): unknown {
+  const d = data as { output?: { output?: unknown } | unknown } | undefined;
+  const inner = d?.output;
+  if (inner && typeof inner === "object" && inner !== null && "output" in inner) {
+    return (inner as { output?: unknown }).output;
+  }
+  return inner ?? data;
 }
 
-export function extractToolCalls(events: RunEvent[], agentId?: string): ToolCallRecord[] {
-  const attributed = attributeEventsToAgents(events);
+export function extractToolCalls(
+  events: RunEvent[],
+  agentId?: string,
+  knownAgentIds?: string[]
+): ToolCallRecord[] {
+  const attributed = attributeEventsToAgents(events, knownAgentIds);
   const source = agentId ? attributed[agentId] ?? [] : events;
   const pending = new Map<string, ToolCallRecord>();
   const records: ToolCallRecord[] = [];
 
   for (const e of source) {
-    const agent = getEventAgent(e) ?? agentId ?? "unknown";
+    const agent = getEventAgent(e, knownAgentIds) ?? agentId ?? "unknown";
     const toolName = (e.name ?? "").split(":").pop() ?? e.name ?? "tool";
 
     if (e.event === "on_tool_start") {
@@ -141,9 +168,18 @@ export function extractToolCalls(events: RunEvent[], agentId?: string): ToolCall
   return records;
 }
 
-export function extractFileChanges(events: RunEvent[], agentId?: string): FileChangeRecord[] {
-  return extractToolCalls(events, agentId)
-    .filter((t) => t.tool.includes("edit_file") || t.tool.includes("read_file"))
+export function extractFileChanges(
+  events: RunEvent[],
+  agentId?: string,
+  knownAgentIds?: string[]
+): FileChangeRecord[] {
+  return extractToolCalls(events, agentId, knownAgentIds)
+    .filter(
+      (t) =>
+        t.tool.includes("edit_file") ||
+        t.tool.includes("write_file") ||
+        t.tool.includes("read_file")
+    )
     .map((t) => {
       const input = t.input as Record<string, unknown> | undefined;
       const output = t.output as Record<string, unknown> | undefined;
@@ -158,8 +194,12 @@ export function extractFileChanges(events: RunEvent[], agentId?: string): FileCh
     .filter((f) => f.path || f.content);
 }
 
-export function extractGitActivity(events: RunEvent[], agentId?: string): GitActivityRecord[] {
-  const tools = extractToolCalls(events, agentId);
+export function extractGitActivity(
+  events: RunEvent[],
+  agentId?: string,
+  knownAgentIds?: string[]
+): GitActivityRecord[] {
+  const tools = extractToolCalls(events, agentId, knownAgentIds);
   const records: GitActivityRecord[] = [];
 
   for (const t of tools) {
@@ -184,6 +224,31 @@ export function extractGitActivity(events: RunEvent[], agentId?: string): GitAct
         ts: t.ts,
       });
     }
+    if (t.tool.includes("git_push")) {
+      records.push({
+        id: t.id,
+        agent: t.agent,
+        type: "push",
+        summary: "Pushed branch to origin",
+        detail: stringifyPreview(t.output),
+        ts: t.ts,
+      });
+    }
+    if (t.tool.includes("create_github_repo")) {
+      const url = extractUrl(t.output);
+      const input = t.input as Record<string, unknown> | undefined;
+      records.push({
+        id: t.id,
+        agent: t.agent,
+        type: "create_repo",
+        summary: url
+          ? `Created repo: ${(input?.name as string) ?? "repository"}`
+          : "Creating GitHub repository",
+        detail: stringifyPreview(t.output),
+        url,
+        ts: t.ts,
+      });
+    }
     if (t.tool.includes("open_pull_request")) {
       const url = extractUrl(t.output);
       records.push({
@@ -201,8 +266,12 @@ export function extractGitActivity(events: RunEvent[], agentId?: string): GitAct
   return records;
 }
 
-export function computeAgentMetrics(events: RunEvent[], agentId: string): AgentMetrics {
-  const agentEvents = attributeEventsToAgents(events)[agentId] ?? [];
+export function computeAgentMetrics(
+  events: RunEvent[],
+  agentId: string,
+  knownAgentIds?: string[]
+): AgentMetrics {
+  const agentEvents = attributeEventsToAgents(events, knownAgentIds)[agentId] ?? [];
   const startTs: Record<string, number> = {};
   const latencies: number[] = [];
   let tokens = 0;
@@ -217,15 +286,17 @@ export function computeAgentMetrics(events: RunEvent[], agentId: string): AgentM
       latencies.push((e.ts - startTs[agentId]) * 1000);
     }
     if (e.event === "on_chat_model_end") {
+      const data = e.data as Record<string, unknown> | undefined;
+      const output = data?.output as Record<string, unknown> | undefined;
+      const chunk = data?.chunk as Record<string, unknown> | undefined;
       const usage =
-        e.data?.output?.usage_metadata ??
-        e.data?.chunk?.usage_metadata ??
-        e.data?.usage_metadata;
-      if (usage?.total_tokens) tokens += usage.total_tokens;
+        output?.usage_metadata ?? chunk?.usage_metadata ?? data?.usage_metadata;
+      const usageObj = usage as { total_tokens?: number } | undefined;
+      if (usageObj?.total_tokens) tokens += usageObj.total_tokens;
     }
   }
 
-  const toolCalls = extractToolCalls(agentEvents, agentId).length;
+  const toolCalls = extractToolCalls(agentEvents, agentId, knownAgentIds).length;
   const avgLatencyMs =
     latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : null;
 
@@ -234,9 +305,10 @@ export function computeAgentMetrics(events: RunEvent[], agentId: string): AgentM
 
 export function getAgentNodeState(
   events: RunEvent[],
-  agentId: string
+  agentId: string,
+  knownAgentIds?: string[]
 ): "idle" | "running" | "done" {
-  const agentEvents = events.filter((e) => getEventAgent(e) === agentId);
+  const agentEvents = events.filter((e) => getEventAgent(e, knownAgentIds) === agentId);
   if (!agentEvents.length) return "idle";
 
   let active = false;

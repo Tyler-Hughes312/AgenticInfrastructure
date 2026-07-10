@@ -41,7 +41,7 @@ export default function TraceDetails({ runId }: { runId: string }) {
           View trace in Langfuse →
         </a>
       ) : (
-        <p className="text-charcoal-muted text-xs">Langfuse trace not available yet.</p>
+        <p className="text-charcoal-muted text-xs">Langfuse tracing not configured (optional).</p>
       )}
       {trace.github_pr_url ? (
         <a

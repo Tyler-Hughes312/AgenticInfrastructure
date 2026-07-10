@@ -65,7 +65,9 @@ export function credentialsHeaders(credentials: StoredCredentials): Record<strin
 
 export function hasMinimumCredentials(credentials: StoredCredentials): boolean {
   const hasLlm = Boolean(credentials.githubCopilotToken || credentials.openaiApiKey);
-  const hasGithub = Boolean(credentials.githubToken);
-  const hasRepo = Boolean(credentials.defaultRepoUrl);
-  return hasLlm && hasGithub && hasRepo;
+  return hasLlm;
+}
+
+export function needsGithubCredentials(credentials: StoredCredentials): boolean {
+  return Boolean(credentials.defaultRepoUrl) || Boolean(credentials.githubToken);
 }

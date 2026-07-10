@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { RunCredentials } from "./types.js";
+import { getCachedCopilotToken } from "../auth/copilot-token.js";
 import { env } from "../config.js";
 
 const storage = new AsyncLocalStorage<RunCredentials>();
@@ -13,7 +14,7 @@ export function resolveCredentials(overrides?: RunCredentials): RunCredentials {
   return {
     githubToken: overrides?.githubToken || active.githubToken || env.GITHUB_TOKEN || undefined,
     githubCopilotToken:
-      overrides?.githubCopilotToken || active.githubCopilotToken || env.GITHUB_COPILOT_TOKEN || undefined,
+      overrides?.githubCopilotToken || active.githubCopilotToken || getCachedCopilotToken() || undefined,
     openaiApiKey: overrides?.openaiApiKey || active.openaiApiKey || env.OPENAI_API_KEY || undefined,
     modelPrimary: overrides?.modelPrimary || active.modelPrimary || env.MODEL_PRIMARY,
     modelFallback: overrides?.modelFallback || active.modelFallback || env.MODEL_FALLBACK,

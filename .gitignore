@@ -6,3 +6,5 @@ dist/
 .copilot_token
 *.log
 .DS_Store
+packages/web/.next/
+packages/web/tsconfig.tsbuildinfo

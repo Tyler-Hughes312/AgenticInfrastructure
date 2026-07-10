@@ -41,7 +41,7 @@ const envSchema = z.object({
   EMBEDDING_MODEL: z.string().default("openai:text-embedding-3-small"),
   DATABASE_URL: z
     .string()
-    .default("postgresql://postgres:postgres@localhost:5432/agent_platform"),
+    .default("postgresql://localhost:5432/agent_platform"),
   GITHUB_TOKEN: z.string().default(""),
   LANGFUSE_PUBLIC_KEY: z.string().default(""),
   LANGFUSE_SECRET_KEY: z.string().default(""),
@@ -50,7 +50,7 @@ const envSchema = z.object({
   API_HOST: z.string().default("0.0.0.0"),
   API_PORT: z.coerce.number().default(8000),
   WORKSPACE_ROOT: z.string().default(".workspaces"),
-  MEMORY_STORE: z.enum(["postgres", "inmemory"]).default("postgres"),
+  MEMORY_STORE: z.enum(["postgres", "inmemory"]).default("inmemory"),
   DEFAULT_REPO_URL: z.string().default(""),
   DEFAULT_PROJECT_NAME: z.string().default("default"),
 });

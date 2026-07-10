@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useChatSession } from "../chat/ChatSessionProvider";
 
 type ActivityItem = {
   href: string;
   label: string;
   icon: React.ReactNode;
+  sessionAware?: boolean;
 };
 
 function HomeIcon() {
@@ -33,6 +35,18 @@ function RunsIcon() {
   );
 }
 
+function CodeIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"
+      />
+    </svg>
+  );
+}
+
 function SettingsIcon() {
   return (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -46,23 +60,50 @@ function SettingsIcon() {
   );
 }
 
-const ITEMS: ActivityItem[] = [
+function ProjectsIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6h.02m-10.02 0h.02M2.25 15.75h15M2.25 18h15"
+      />
+    </svg>
+  );
+}
+
+const STATIC_ITEMS: ActivityItem[] = [
   { href: "/", label: "Workspace", icon: <HomeIcon /> },
+  { href: "/projects", label: "Projects", icon: <ProjectsIcon /> },
+  { href: "/code", label: "Code", icon: <CodeIcon /> },
   { href: "/runs", label: "Runs", icon: <RunsIcon /> },
   { href: "/settings", label: "Settings", icon: <SettingsIcon /> },
 ];
 
 export default function ActivityBar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { sessionId, projectId } = useChatSession();
+
+  const queryParts: string[] = [];
+  const proj = projectId ?? searchParams.get("project");
+  const sess = sessionId ?? searchParams.get("session");
+  if (proj) queryParts.push(`project=${encodeURIComponent(proj)}`);
+  if (sess) queryParts.push(`session=${encodeURIComponent(sess)}`);
+  const sessionQuery = queryParts.length ? `?${queryParts.join("&")}` : "";
 
   return (
     <aside className="w-12 shrink-0 bg-charcoal-surface border-r border-charcoal-border flex flex-col items-center py-3 gap-1">
-      {ITEMS.map((item) => {
-        const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+      {STATIC_ITEMS.map((item) => {
+        const href = `${item.href}${sessionQuery}`;
+        const active =
+          item.href === "/"
+            ? pathname === "/"
+            : pathname === item.href || pathname.startsWith(`${item.href}/`);
         return (
           <Link
             key={item.href}
-            href={item.href}
+            href={href}
             title={item.label}
             className={`p-2.5 rounded-lg transition-colors ${
               active

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   type AgentMeta,
   attributeEventsToAgents,
@@ -11,6 +12,7 @@ import {
   getAgentNodeState,
 } from "../../lib/agent-debug";
 import type { RunEvent } from "../../lib/types/run";
+import { useChatSession } from "../chat/ChatSessionProvider";
 
 type DebugTab = "overview" | "logs" | "tools" | "code" | "git";
 
@@ -26,6 +28,7 @@ type AgentDebugPanelProps = {
   agentId: string;
   agentMeta?: AgentMeta;
   events: RunEvent[];
+  knownAgentIds?: string[];
   onClose: () => void;
 };
 
@@ -33,19 +36,36 @@ export default function AgentDebugPanel({
   agentId,
   agentMeta,
   events,
+  knownAgentIds,
   onClose,
 }: AgentDebugPanelProps) {
   const [tab, setTab] = useState<DebugTab>("overview");
+  const { sessionId } = useChatSession();
 
   const agentEvents = useMemo(
-    () => attributeEventsToAgents(events)[agentId] ?? [],
-    [events, agentId]
+    () => attributeEventsToAgents(events, knownAgentIds)[agentId] ?? [],
+    [events, agentId, knownAgentIds]
   );
-  const metrics = useMemo(() => computeAgentMetrics(events, agentId), [events, agentId]);
-  const toolCalls = useMemo(() => extractToolCalls(events, agentId), [events, agentId]);
-  const fileChanges = useMemo(() => extractFileChanges(events, agentId), [events, agentId]);
-  const gitActivity = useMemo(() => extractGitActivity(events, agentId), [events, agentId]);
-  const status = useMemo(() => getAgentNodeState(events, agentId), [events, agentId]);
+  const metrics = useMemo(
+    () => computeAgentMetrics(events, agentId, knownAgentIds),
+    [events, agentId, knownAgentIds]
+  );
+  const toolCalls = useMemo(
+    () => extractToolCalls(events, agentId, knownAgentIds),
+    [events, agentId, knownAgentIds]
+  );
+  const fileChanges = useMemo(
+    () => extractFileChanges(events, agentId, knownAgentIds),
+    [events, agentId, knownAgentIds]
+  );
+  const gitActivity = useMemo(
+    () => extractGitActivity(events, agentId, knownAgentIds),
+    [events, agentId, knownAgentIds]
+  );
+  const status = useMemo(
+    () => getAgentNodeState(events, agentId, knownAgentIds),
+    [events, agentId, knownAgentIds]
+  );
 
   const statusColor =
     status === "running"
@@ -169,9 +189,23 @@ export default function AgentDebugPanel({
             ) : (
               fileChanges.map((f) => (
                 <div key={f.id} className="border border-charcoal-border rounded-lg overflow-hidden">
-                  <div className="px-3 py-2 bg-charcoal-bg border-b border-charcoal-border text-xs font-mono text-charcoal-text">{f.path ?? "file"}</div>
+                  <div className="px-3 py-2 bg-charcoal-bg border-b border-charcoal-border flex items-center justify-between gap-2">
+                    <span className="text-xs font-mono text-charcoal-text truncate">
+                      {f.path ?? "file"}
+                    </span>
+                    {sessionId && f.path && (
+                      <Link
+                        href={`/code?session=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(f.path)}`}
+                        className="text-[11px] text-charcoal-accent hover:underline shrink-0"
+                      >
+                        Open in Code IDE
+                      </Link>
+                    )}
+                  </div>
                   {f.content && (
-                    <pre className="text-xs p-3 overflow-auto max-h-48 whitespace-pre-wrap text-charcoal-muted">{formatJson(f.content)}</pre>
+                    <pre className="text-xs p-3 overflow-auto max-h-48 whitespace-pre-wrap text-charcoal-muted">
+                      {formatJson(f.content)}
+                    </pre>
                   )}
                 </div>
               ))

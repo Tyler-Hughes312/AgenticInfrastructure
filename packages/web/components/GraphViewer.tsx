@@ -141,6 +141,7 @@ export default function GraphViewer({
   const {
     config,
     availableTools,
+    availableSkills,
     availableModels,
     saveConfig,
     addAgent,
@@ -165,6 +166,7 @@ export default function GraphViewer({
 
   const schemaEdges = config.edges;
   const NODE_IDS = useMemo(() => new Set(schemaNodes.map((n) => n.id)), [schemaNodes]);
+  const workerIds = useMemo(() => config.agents.map((a) => a.id), [config.agents]);
 
   useEffect(() => {
     if (!schemaNodes.length) return;
@@ -255,9 +257,9 @@ export default function GraphViewer({
         tools: agentConfig.tools,
         routesTo: agentConfig.routesTo,
       } : undefined);
-      const metrics = computeAgentMetrics(events, n.id);
-      const toolCount = extractToolCalls(events, n.id).length;
-      const status = getAgentNodeState(events, n.id);
+      const metrics = computeAgentMetrics(events, n.id, workerIds);
+      const toolCount = extractToolCalls(events, n.id, workerIds).length;
+      const status = getAgentNodeState(events, n.id, workerIds);
       const isActive = n.id === activeNode;
       const isDone = completedNodes.has(n.id) || status === "done";
       const isSelected = n.id === selectedNodeId;
@@ -392,6 +394,7 @@ export default function GraphViewer({
 
       <div className="flex-1 min-h-[280px] w-full rounded-xl overflow-hidden border border-charcoal-border bg-charcoal-bg">
         <ReactFlow
+          key={schemaNodes.map((n) => n.id).join("|") || "blank"}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
@@ -418,6 +421,7 @@ export default function GraphViewer({
       <AgentCreateModal
         open={showCreateModal}
         availableTools={availableTools}
+        availableSkills={availableSkills}
         availableModels={availableModels}
         existingIds={agentIds}
         onClose={() => setShowCreateModal(false)}

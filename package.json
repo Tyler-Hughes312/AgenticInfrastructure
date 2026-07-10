@@ -13,5 +13,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "overrides": {
+    "@langchain/core": "^1.2.2"
   }
 }

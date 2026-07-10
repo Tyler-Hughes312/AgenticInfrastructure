@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
+import { warmCopilotTokenFromEnv } from "./auth/copilot-token.js";
 import { env, corsOrigins, logEnvSummary } from "./config.js";
 import { setupDb, shutdownDb } from "./db.js";
 import { setupAppTables } from "./db/app-db.js";
@@ -9,6 +10,9 @@ import { runRoutes } from "./routes/runs.js";
 import { agentLensCompatRoutes } from "./routes/agentlens-compat.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { orchestratorRoutes } from "./routes/orchestrator.js";
+import { chatSessionRoutes } from "./routes/chat-sessions.js";
+import { graphTemplateRoutes } from "./routes/graph-templates.js";
+import { workspaceRoutes } from "./routes/workspace.js";
 
 const app = Fastify({ logger: true });
 
@@ -21,10 +25,14 @@ await projectRoutes(app);
 await runRoutes(app);
 await settingsRoutes(app);
 await orchestratorRoutes(app);
+await chatSessionRoutes(app);
+await graphTemplateRoutes(app);
+await workspaceRoutes(app);
 await agentLensCompatRoutes(app);
 
 async function start() {
   logEnvSummary();
+  await warmCopilotTokenFromEnv();
   try {
     await setupDb();
     await setupAppTables();
@@ -33,10 +41,9 @@ async function start() {
     if (msg.includes('role "postgres" does not exist')) {
       console.error(
         "\nDatabase connection failed: no PostgreSQL role 'postgres'.\n" +
-          "Port 5432 is likely your local Postgres (not Docker). Update packages/server/.env:\n" +
+          "Use your local Postgres user in packages/server/.env:\n" +
           "  DATABASE_URL=postgresql://<your-mac-username>@localhost:5432/agent_platform\n" +
-          "Then run: createdb agent_platform && psql agent_platform -c 'CREATE EXTENSION IF NOT EXISTS vector;'\n" +
-          "Or use Docker: docker compose up -d (connects on port 5433).\n"
+          "Then run: createdb agent_platform\n"
       );
     }
     throw err;

@@ -4,7 +4,7 @@ import type { OrchestratorGraphConfig, CustomAgentConfig, GraphEdgeConfig } from
 export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphConfig {
   const repoLine = repoHint?.trim()
     ? `Target repository: ${repoHint.trim()}. Prefer this remote for commits and PRs.`
-    : "Use the run workspace / default repo URL from Settings for git and PRs.";
+    : "No GitHub remote is configured yet. The publisher MUST call create_github_repo to provision one before git_push.";
 
   const agents: CustomAgentConfig[] = [
     {
@@ -12,9 +12,11 @@ export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphCo
       label: "Planner",
       role: "Breaks the user request into a short implementation plan and file list. Does not write production code.",
       prompt:
-        "You are Planner. Produce a concise plan: goals, files to create/change, acceptance checks. " +
-        "Do NOT implement the full solution. When the plan is ready, stop and return control to the supervisor. " +
-        "Do not call other agents.",
+        "You are Planner.\n## Skills\n- Scope skill: turn the request into goals, files, and acceptance checks.\n" +
+        "- Sequencing skill: order work for Builder → Reviewer → Publisher.\n" +
+        "- Memory skill: use manage_memory/search_memory for durable notes.\n" +
+        "## Tools\nread_file, manage_memory, search_memory\n" +
+        "Do NOT implement the full solution. When the plan is ready, stop.",
       tools: ["read_file", "manage_memory", "search_memory"],
       routesTo: ["builder"],
       launchWhen: ["New software or build request that needs planning."],
@@ -26,11 +28,23 @@ export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphCo
       label: "Builder",
       role: "Implements the plan in the workspace using shell and file tools.",
       prompt:
-        "You are Builder. Implement the requested software in the workspace. " +
-        `${repoLine} ` +
-        "Create files, run smoke checks when useful, commit locally if appropriate. " +
-        "When implementation is done for this pass, stop and return control. Do not open a PR. Do not loop forever.",
-      tools: ["shell", "read_file", "edit_file", "git_diff", "git_commit", "manage_memory", "search_memory"],
+        "You are Builder.\n" +
+        `${repoLine}\n` +
+        "## Skills\n- Implementation skill: create/edit files to satisfy the plan.\n" +
+        "- Smoke-test skill: run quick shell checks when useful.\n" +
+        "- Git skill: commit locally when appropriate; do not open a PR.\n" +
+        "## Tools\nshell, read_file, edit_file, git_diff, git_commit, git_push, manage_memory, search_memory\n" +
+        "When this pass is done, stop and return control. Do not loop forever.",
+      tools: [
+        "shell",
+        "read_file",
+        "edit_file",
+        "git_diff",
+        "git_commit",
+        "git_push",
+        "manage_memory",
+        "search_memory",
+      ],
       routesTo: ["reviewer"],
       launchWhen: ["Planner finished, or user asked for implementation."],
       doNotLaunchWhen: ["Reviewer already requested a second rebuild in this turn."],
@@ -41,14 +55,12 @@ export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphCo
       label: "Reviewer",
       role: "Reviews the diff once; may request at most one fix pass.",
       prompt:
-        "You are Reviewer. Inspect the git diff and key files. Prefer shipping progress over perfection. " +
-        "Unless there is a critical blocker (security hole, broken entrypoint, empty project), APPROVE. " +
-        "End your final message with exactly one of:\n" +
-        "DECISION: APPROVED\n" +
-        "or\n" +
-        "DECISION: REQUEST_CHANGES\n" +
-        "You do not edit code. After that decision line, stop.",
-      tools: ["git_diff", "read_file"],
+        "You are Reviewer.\n## Skills\n- Diff review skill: inspect git_diff and key files.\n" +
+        "- Risk skill: approve unless there is a critical blocker.\n" +
+        "## Tools\ngit_diff, read_file, shell, manage_memory\n" +
+        "End with exactly one of:\nDECISION: APPROVED\nor\nDECISION: REQUEST_CHANGES\n" +
+        "Do not edit code. After the decision line, stop.",
+      tools: ["git_diff", "read_file", "shell", "manage_memory"],
       routesTo: ["builder", "publisher"],
       launchWhen: ["Builder finished a pass."],
       doNotLaunchWhen: ["No diff exists yet."],
@@ -59,12 +71,22 @@ export function buildSoftwareDevPipeline(repoHint?: string): OrchestratorGraphCo
       label: "Publisher",
       role: "Pushes and opens a pull request to the target GitHub repository.",
       prompt:
-        "You are Publisher. " +
-        `${repoLine} ` +
-        "Commit if needed, push the branch, open a pull request, and return the PR URL. Then stop. " +
-        "If there is no remote repo configured, explain that clearly and stop. " +
-        "Do not wait for further human confirmation once you are invoked.",
-      tools: ["git_diff", "git_commit", "git_push", "open_pull_request", "shell"],
+        "You are Publisher.\n" +
+        `${repoLine}\n` +
+        "## Skills\n- Ship skill: create GitHub repo if needed, commit, push branch, open PR, return URL.\n" +
+        "- Repo skill: if no origin remote, call create_github_repo first with a sensible repo name.\n" +
+        "## Tools\ngit_diff, git_commit, git_push, create_github_repo, init_git_repo, open_pull_request, shell, read_file\n" +
+        "Do not tell the user to create a repo manually in the GitHub UI. Use create_github_repo. Do not wait for further human confirmation once invoked.",
+      tools: [
+        "git_diff",
+        "git_commit",
+        "git_push",
+        "create_github_repo",
+        "init_git_repo",
+        "open_pull_request",
+        "shell",
+        "read_file",
+      ],
       routesTo: [],
       launchWhen: [
         "Reviewer ended with DECISION: APPROVED.",
@@ -101,6 +123,7 @@ export function isSoftwareDevTask(task: string): boolean {
   const t = task.toLowerCase();
   const cues = [
     "build",
+    "make",
     "create",
     "implement",
     "frontend",
@@ -131,10 +154,18 @@ export function isSoftwareDevTask(task: string): boolean {
     "django",
     "flask",
     "fastapi",
+    "agent",
+    "agentic",
+    "pipeline",
+    "scrum",
+    "architect",
+    "coding",
+    "tester",
+    "parallel",
   ];
   if (cues.some((c) => t.includes(c))) return true;
   // Longer briefs are usually build requests
-  return t.length > 120;
+  return t.length > 80;
 }
 
 export function extractRepoHint(task: string): string | undefined {
@@ -152,5 +183,6 @@ export const SOFTWARE_DEV_SUPERVISOR_RULES = [
   "Never bounce endlessly between builder and reviewer. After one fix pass + re-review, go to publisher or END.",
   "If the user only asked a question (no build), answer briefly yourself and END — do not deploy loops.",
   "When publisher returns a PR URL (or explains no repo), END immediately.",
+  "If the workspace has no GitHub remote, publisher must call create_github_repo before git_push — never ask the human to create a repo in the browser.",
   "Do not re-call planner after the plan is done.",
 ];

@@ -1,6 +1,6 @@
-import React from "react";
+import React, { Suspense } from "react";
 import "./globals.css";
-import { OrchestratorProvider } from "../components/orchestrator/OrchestratorProvider";
+import { ChatSessionProvider } from "../components/chat/ChatSessionProvider";
 
 export default function RootLayout({
   children,
@@ -10,7 +10,15 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="h-full bg-charcoal-bg text-charcoal-text antialiased">
-        <OrchestratorProvider>{children}</OrchestratorProvider>
+        <Suspense
+          fallback={
+            <div className="h-screen bg-charcoal-bg text-charcoal-muted flex items-center justify-center">
+              Loading...
+            </div>
+          }
+        >
+          <ChatSessionProvider>{children}</ChatSessionProvider>
+        </Suspense>
       </body>
     </html>
   );

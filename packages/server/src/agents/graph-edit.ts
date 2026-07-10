@@ -1,13 +1,26 @@
 import type { CustomAgentConfig, GraphEdgeConfig, OrchestratorGraphConfig } from "./agent-registry.js";
-import { AVAILABLE_TOOL_NAMES, syncRoutesToFromEdges } from "./agent-registry.js";
+import { syncRoutesToFromEdges } from "./agent-registry.js";
+
+function looksLikeParallelDeveloperEdit(text: string): boolean {
+  const t = text.trim();
+  if (/\bparallel\s+devs?\b/i.test(t)) return true;
+  if (
+    /\b(add|make|create|use|have)\b.{0,24}\bparallel\b.{0,24}\b(dev|developer|coder)s?\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (!/\b(parallel|multiple|several)\b/i.test(t)) return false;
+  return /\b(dev|developer|coder|coding)\b/i.test(t);
+}
 
 export type GraphEditCommand =
   | { type: "remove"; agentRef: string }
-  | { type: "add"; label: string; role?: string; tools?: string[] }
+  | { type: "add"; label: string; role?: string; tools?: string[]; skills?: string[] }
   | { type: "connect"; source: string; target: string; label?: string }
   | { type: "disconnect"; source: string; target: string }
   | { type: "rename"; agentRef: string; newLabel: string }
-  | { type: "rebuild"; task: string };
+  | { type: "rebuild"; task: string }
+  | { type: "refine"; task: string };
 
 function normalizeRef(raw: string): string {
   return raw
@@ -41,6 +54,10 @@ export function resolveAgentRef(
 
 export function parseGraphEditCommand(text: string): GraphEditCommand | null {
   const trimmed = text.trim();
+
+  if (looksLikeParallelDeveloperEdit(trimmed)) {
+    return { type: "refine", task: trimmed };
+  }
 
   const remove =
     trimmed.match(
@@ -102,47 +119,6 @@ export function parseGraphEditCommand(text: string): GraphEditCommand | null {
   }
 
   return null;
-}
-
-function defaultToolsForLabel(label: string): string[] {
-  const l = label.toLowerCase();
-  if (/test|qa|quality/.test(l)) {
-    return ["shell", "read_file", "edit_file", "git_diff", "manage_memory", "search_memory"];
-  }
-  if (/architect|design|lead/.test(l)) {
-    return ["shell", "read_file", "edit_file", "git_diff", "manage_memory", "search_memory"];
-  }
-  if (/scrum|product|manager|pm|po/.test(l)) {
-    return ["read_file", "manage_memory", "search_memory", "shell"];
-  }
-  if (/review|publisher|ship/.test(l)) {
-    return ["git_diff", "read_file", "git_commit", "git_push", "open_pull_request", "shell", "manage_memory"];
-  }
-  if (/coder|build|dev|implement|engineer/.test(l)) {
-    return [
-      "shell",
-      "read_file",
-      "edit_file",
-      "git_diff",
-      "git_commit",
-      "git_push",
-      "manage_memory",
-      "search_memory",
-    ];
-  }
-  return [...AVAILABLE_TOOL_NAMES];
-}
-
-function skillPrompt(label: string, role: string, tools: string[]): string {
-  return (
-    `You are ${label}. ${role}\n\n` +
-    `## Skills\n` +
-    `- Planning: clarify goals, constraints, and done-when checks before heavy work.\n` +
-    `- Tool use: prefer these tools — ${tools.join(", ")}.\n` +
-    `- Collaboration: leave a short status for the supervisor when finished; do not loop forever.\n` +
-    `- Safety: do not invent credentials; use workspace tools for file/shell/git actions.\n\n` +
-    `When your assignment is complete, return control to the supervisor.`
-  );
 }
 
 export function applyGraphEdit(
@@ -246,43 +222,9 @@ export function applyGraphEdit(
     return { config, message: `Rebuild triggered for: "${command.task}"` };
   }
 
-  // add
-  const baseId = normalizeRef(command.label) || "custom_agent";
-  let id = baseId;
-  let n = 2;
-  while (config.agents.some((a) => a.id === id)) {
-    id = `${baseId}_${n++}`;
+  if (command.type === "refine" || command.type === "add") {
+    throw new Error(`${command.type} graph edits must be applied via LLM (applyGraphChangeFromCommand)`);
   }
-  const tools = command.tools?.length ? command.tools : defaultToolsForLabel(command.label);
-  const role =
-    command.role?.trim() ||
-    `Specialist agent (${command.label}) that helps with the current orchestrator project.`;
-  const hasFinal = config.agents.some((a) => a.id === "final_review");
-  const agent: CustomAgentConfig = {
-    id,
-    label: command.label.replace(/\b\w/g, (c) => c.toUpperCase()),
-    role,
-    prompt: skillPrompt(command.label, role, tools),
-    tools,
-    routesTo: hasFinal ? ["final_review"] : [],
-    launchWhen: [`Supervisor routes work to ${command.label}.`],
-    doNotLaunchWhen: [],
-    position: { x: 80 + (config.agents.length % 3) * 220, y: 160 + Math.floor(config.agents.length / 3) * 140 },
-  };
 
-  const agents = [...config.agents, agent];
-  const edges = [
-    ...config.edges,
-    { source: "supervisor", target: id, label: "route" },
-    ...(hasFinal ? [{ source: id, target: "final_review", label: "then" }] : []),
-  ];
-  const next = {
-    agents: syncRoutesToFromEdges(agents, edges),
-    edges,
-    supervisorModel: config.supervisorModel,
-  };
-  return {
-    config: next,
-    message: `Added **${agent.label}** (\`${agent.id}\`) with tools: ${tools.join(", ")}.`,
-  };
+  throw new Error(`Unsupported graph edit: ${(command as GraphEditCommand).type}`);
 }

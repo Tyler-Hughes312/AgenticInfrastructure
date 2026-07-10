@@ -12,7 +12,10 @@ import ReplayControls from "../ReplayControls";
 import TraceDetails from "../TraceDetails";
 import DriftPanel from "../DriftPanel";
 import StatusLog from "../StatusLog";
+import SaveInfrastructureModal from "./SaveInfrastructureModal";
+import LoadInfrastructureModal from "./LoadInfrastructureModal";
 import { useOrchestrator } from "../orchestrator/OrchestratorProvider";
+import { useChatSession } from "../chat/ChatSessionProvider";
 import type { AgentMeta } from "../../lib/agent-debug";
 import type { DiffItem } from "../diff";
 import type { RunEvent } from "../../lib/types/run";
@@ -56,7 +59,10 @@ export default function ObservabilityTabs({
 }: ObservabilityTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("graph");
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [showSaveInfra, setShowSaveInfra] = useState(false);
+  const [showLoadInfra, setShowLoadInfra] = useState(false);
   const { config } = useOrchestrator();
+  const { sessionId } = useChatSession();
 
   const agentMetaMap = useMemo((): Record<string, AgentMeta> => {
     const map: Record<string, AgentMeta> = {
@@ -81,6 +87,7 @@ export default function ObservabilityTabs({
   }, [config.agents]);
 
   const selectedMeta = selectedAgent ? agentMetaMap[selectedAgent] : undefined;
+  const workerIds = useMemo(() => config.agents.map((a) => a.id), [config.agents]);
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-charcoal-bg text-charcoal-text">
@@ -109,11 +116,31 @@ export default function ObservabilityTabs({
             >
               <div className="px-4 pt-3 shrink-0">
                 <StatusLog events={filteredEvents} />
-                <p className="text-xs text-charcoal-muted mb-2">
-                  {config.agents.length === 0
-                    ? "Blank project canvas — the orchestrator will deploy sub-agents when you send a build task."
-                    : "Click an agent node to inspect logs, tools, code, and git activity."}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <p className="text-xs text-charcoal-muted">
+                    {config.agents.length === 0
+                      ? "Blank project canvas — the orchestrator will deploy sub-agents when you send a build task."
+                      : "Click an agent node to inspect logs, tools, code, and git activity."}
+                  </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowLoadInfra(true)}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-charcoal-border hover:bg-charcoal-raised text-charcoal-muted hover:text-charcoal-text"
+                    >
+                      Load infrastructure
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowSaveInfra(true)}
+                      disabled={config.agents.length === 0}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-charcoal-accent/50 text-charcoal-accent hover:bg-charcoal-accent/10 disabled:opacity-40"
+                      title="Explicitly save this agent team as a reusable blueprint"
+                    >
+                      Save infrastructure
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="flex-1 min-h-0 px-4 pb-4">
                 <GraphViewer
@@ -130,6 +157,7 @@ export default function ObservabilityTabs({
                   agentId={selectedAgent}
                   agentMeta={selectedMeta}
                   events={filteredEvents}
+                  knownAgentIds={workerIds}
                   onClose={() => setSelectedAgent(null)}
                 />
               </div>
@@ -174,7 +202,7 @@ export default function ObservabilityTabs({
           <div className="overflow-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className={panelClass}>
               <h3 className="text-sm font-semibold mb-3 text-charcoal-text">Performance Metrics</h3>
-              <CostLatencyPanel events={filteredEvents} />
+              <CostLatencyPanel events={filteredEvents} agentIds={workerIds} />
             </div>
             <div className={panelClass}>
               <h3 className="text-sm font-semibold mb-3 text-charcoal-text">Quality Metrics</h3>
@@ -211,6 +239,18 @@ export default function ObservabilityTabs({
           </div>
         )}
       </div>
+
+      <SaveInfrastructureModal
+        open={showSaveInfra}
+        onClose={() => setShowSaveInfra(false)}
+        sessionId={sessionId}
+        config={config}
+      />
+      <LoadInfrastructureModal
+        open={showLoadInfra}
+        onClose={() => setShowLoadInfra(false)}
+        applyToCurrent
+      />
     </div>
   );
 }

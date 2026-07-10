@@ -1,23 +1,32 @@
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { shellTool } from "../tools/shell.js";
-import { readFile, editFile } from "../tools/file-editor.js";
-import { gitDiff, gitCommit, gitPush } from "../tools/git-ops.js";
-import { openPullRequest } from "../tools/github-pr.js";
+import { readFile, editFile, writeFile, writeDocument } from "../tools/file-editor.js";
+import { gitCreateBranch, gitDiff, gitCommit, gitPush, initGitRepo } from "../tools/git-ops.js";
+import { createGithubRepo, openPullRequest } from "../tools/github-pr.js";
 import { manageMemory, searchMemory } from "../memory/tools.js";
+import { publishHandoff, readPipelineContext } from "../tools/pipeline-handoff.js";
 import { getModelForAgent } from "../models-llm.js";
 import type { AgentRoutingRule } from "./routing-policy.js";
+import { enrichAgentWithSkills } from "./skill-catalog.js";
 
 export const AVAILABLE_TOOL_NAMES = [
   "shell",
   "read_file",
+  "write_file",
+  "write_document",
   "edit_file",
+  "init_git_repo",
+  "git_create_branch",
   "git_diff",
   "git_commit",
   "git_push",
+  "create_github_repo",
   "open_pull_request",
   "manage_memory",
   "search_memory",
+  "publish_handoff",
+  "read_pipeline_context",
 ] as const;
 
 export type ToolName = (typeof AVAILABLE_TOOL_NAMES)[number];
@@ -25,13 +34,20 @@ export type ToolName = (typeof AVAILABLE_TOOL_NAMES)[number];
 const TOOL_MAP: Record<ToolName, StructuredToolInterface> = {
   shell: shellTool,
   read_file: readFile,
+  write_file: writeFile,
+  write_document: writeDocument,
   edit_file: editFile,
+  init_git_repo: initGitRepo,
+  git_create_branch: gitCreateBranch,
   git_diff: gitDiff,
   git_commit: gitCommit,
   git_push: gitPush,
+  create_github_repo: createGithubRepo,
   open_pull_request: openPullRequest,
   manage_memory: manageMemory,
   search_memory: searchMemory,
+  publish_handoff: publishHandoff,
+  read_pipeline_context: readPipelineContext,
 };
 
 export type CustomAgentConfig = {
@@ -40,6 +56,9 @@ export type CustomAgentConfig = {
   role: string;
   prompt?: string;
   tools: string[];
+  skills?: string[];
+  consumes?: string;
+  produces?: string;
   model?: string;
   routesTo: string[];
   launchWhen?: string[];
@@ -173,7 +192,7 @@ export function normalizeOrchestratorConfig(
     };
   }
   return {
-    agents: syncRoutesToFromEdges(agents, edges),
+    agents: syncRoutesToFromEdges(agents, edges).map(enrichAgentWithSkills),
     edges,
     supervisorModel: input.supervisorModel,
     deliverableMode: input.deliverableMode,

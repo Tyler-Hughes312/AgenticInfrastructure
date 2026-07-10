@@ -1,15 +1,22 @@
 "use client";
 
 import { useMemo } from "react";
-import { CODING_AGENT_NODES } from "../lib/agent-nodes";
 import type { RunEvent } from "../lib/types/run";
 
-export default function CostLatencyPanel({ events }: { events: RunEvent[] }) {
+export default function CostLatencyPanel({
+  events,
+  agentIds = [],
+}: {
+  events: RunEvent[];
+  agentIds?: string[];
+}) {
   const stats = useMemo(() => {
     const startTs: Record<string, number> = {};
     const latencyMs: Record<string, number[]> = {};
     let totalTokens = 0;
-    const nodeIds = new Set<string>(CODING_AGENT_NODES);
+    const nodeIds = new Set<string>(
+      agentIds.length ? agentIds : ["supervisor", "coder", "reviewer", "pr_opener"]
+    );
 
     for (const e of events) {
       if (!e.ts) continue;
@@ -105,7 +112,7 @@ export default function CostLatencyPanel({ events }: { events: RunEvent[] }) {
     const estCostUsd = (totalTokens / 1_000_000) * 0.15;
 
     return { avgLatency, totalTokens, estCostUsd };
-  }, [events]);
+  }, [events, agentIds]);
 
   return (
     <div className="space-y-2 text-sm">

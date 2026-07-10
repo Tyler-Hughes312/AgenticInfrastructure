@@ -1,11 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import type { CustomAgentConfig } from "../../lib/types/orchestrator";
+import { useEffect, useMemo, useState } from "react";
+import type { CustomAgentConfig, SkillDefinition } from "../../lib/types/orchestrator";
+import {
+  groupSkillsByCategory,
+  mergeToolsFromSkills,
+  suggestSkillIdsForLabelRole,
+  SKILL_CATEGORY_LABELS,
+} from "../../lib/skill-utils";
 
 type AgentCreateModalProps = {
   open: boolean;
   availableTools: string[];
+  availableSkills: SkillDefinition[];
   availableModels: string[];
   existingIds: string[];
   onClose: () => void;
@@ -26,6 +33,7 @@ const inputClass =
 export default function AgentCreateModal({
   open,
   availableTools,
+  availableSkills,
   availableModels,
   existingIds,
   onClose,
@@ -35,15 +43,41 @@ export default function AgentCreateModal({
   const [id, setId] = useState("");
   const [role, setRole] = useState("");
   const [model, setModel] = useState("");
+  const [skills, setSkills] = useState<string[]>([]);
   const [tools, setTools] = useState<string[]>(["read_file"]);
+  const [manualToolEdits, setManualToolEdits] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const skillGroups = useMemo(
+    () => groupSkillsByCategory(availableSkills),
+    [availableSkills]
+  );
+
+  useEffect(() => {
+    if (manualToolEdits || !skills.length) return;
+    setTools(mergeToolsFromSkills(skills, availableSkills));
+  }, [skills, availableSkills, manualToolEdits]);
 
   if (!open) return null;
 
+  function toggleSkill(skillId: string) {
+    setSkills((prev) =>
+      prev.includes(skillId) ? prev.filter((s) => s !== skillId) : [...prev, skillId]
+    );
+  }
+
   function toggleTool(tool: string) {
+    setManualToolEdits(true);
     setTools((prev) =>
       prev.includes(tool) ? prev.filter((t) => t !== tool) : [...prev, tool]
     );
+  }
+
+  function applySuggestedSkills() {
+    const suggested = suggestSkillIdsForLabelRole(label, role, availableSkills);
+    if (!suggested.length) return;
+    setSkills(suggested);
+    setManualToolEdits(false);
   }
 
   function handleSubmit() {
@@ -60,6 +94,10 @@ export default function AgentCreateModal({
       setError("Label and role are required.");
       return;
     }
+    if (!skills.length) {
+      setError("Select at least one skill.");
+      return;
+    }
     if (!tools.length) {
       setError("Select at least one tool.");
       return;
@@ -69,6 +107,7 @@ export default function AgentCreateModal({
       id: agentId,
       label: label.trim(),
       role: role.trim(),
+      skills,
       tools,
       model: model || undefined,
       routesTo: [],
@@ -78,39 +117,47 @@ export default function AgentCreateModal({
     setId("");
     setRole("");
     setModel("");
+    setSkills([]);
     setTools(["read_file"]);
+    setManualToolEdits(false);
     setError(null);
     onClose();
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="bg-charcoal-surface rounded-2xl shadow-xl border border-charcoal-border w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 text-charcoal-text">
-        <h2 className="text-lg font-semibold text-charcoal-text mb-4">Create agent</h2>
+      <div className="bg-charcoal-surface rounded-2xl shadow-xl border border-charcoal-border w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 text-charcoal-text">
+        <h2 className="text-lg font-semibold text-charcoal-text mb-1">Create agent</h2>
+        <p className="text-sm text-charcoal-muted mb-4">
+          Pick skills to define what this agent can do. Tools are auto-selected from skills; you can
+          add extras (e.g. give a builder the testing skill).
+        </p>
 
         {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
 
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-charcoal-text mb-1">Label</label>
-            <input
-              className={inputClass}
-              value={label}
-              onChange={(e) => {
-                setLabel(e.target.value);
-                if (!id) setId(slugifyId(e.target.value));
-              }}
-              placeholder="Code reviewer"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-charcoal-text mb-1">Id</label>
-            <input
-              className={`${inputClass} font-mono text-sm`}
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              placeholder="code_reviewer"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-charcoal-text mb-1">Label</label>
+              <input
+                className={inputClass}
+                value={label}
+                onChange={(e) => {
+                  setLabel(e.target.value);
+                  if (!id) setId(slugifyId(e.target.value));
+                }}
+                placeholder="Backend developer"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-charcoal-text mb-1">Id</label>
+              <input
+                className={`${inputClass} font-mono text-sm`}
+                value={id}
+                onChange={(e) => setId(e.target.value)}
+                placeholder="backend_dev"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-charcoal-text mb-1">Role</label>
@@ -119,7 +166,7 @@ export default function AgentCreateModal({
               rows={2}
               value={role}
               onChange={(e) => setRole(e.target.value)}
-              placeholder="Reviews code changes for quality and security."
+              placeholder="Implements API endpoints and server-side logic."
             />
           </div>
           <div>
@@ -136,8 +183,51 @@ export default function AgentCreateModal({
               ))}
             </select>
           </div>
+
           <div>
-            <label className="block text-sm font-medium text-charcoal-text mb-2">Tools</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-charcoal-text">Skills</label>
+              <button
+                type="button"
+                onClick={applySuggestedSkills}
+                className="text-xs text-charcoal-accent hover:underline"
+              >
+                Suggest from role
+              </button>
+            </div>
+            <div className="space-y-3 max-h-48 overflow-y-auto rounded-lg border border-charcoal-border p-3 bg-charcoal-bg">
+              {skillGroups.map(([category, items]) => (
+                <div key={category}>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-charcoal-muted mb-1.5">
+                    {SKILL_CATEGORY_LABELS[category] ?? category}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {items.map((skill) => (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        title={skill.description}
+                        onClick={() => toggleSkill(skill.id)}
+                        className={`px-2.5 py-1 rounded-full text-xs border ${
+                          skills.includes(skill.id)
+                            ? "bg-charcoal-accent/15 border-charcoal-accent/40 text-charcoal-accent"
+                            : "bg-charcoal-raised border-charcoal-border text-charcoal-muted hover:text-charcoal-text"
+                        }`}
+                      >
+                        {skill.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-charcoal-text mb-2">
+              Tools{" "}
+              <span className="font-normal text-charcoal-muted">(from skills + optional extras)</span>
+            </label>
             <div className="flex flex-wrap gap-2">
               {availableTools.map((tool) => (
                 <button

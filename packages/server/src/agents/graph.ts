@@ -23,8 +23,12 @@ function getDefaultCompiledGraph() {
   return defaultCompiledGraph;
 }
 
-export function getCompiledGraph(config?: OrchestratorGraphConfig, targetAgent?: string) {
-  return getCompiledGraphFromConfig(config ?? getSessionOrchestratorConfig(), targetAgent);
+export function getCompiledGraph(
+  config?: OrchestratorGraphConfig,
+  targetAgent?: string,
+  repoUrl?: string
+) {
+  return getCompiledGraphFromConfig(config ?? getSessionOrchestratorConfig(), targetAgent, repoUrl);
 }
 
 export function invalidateCompiledGraph() {

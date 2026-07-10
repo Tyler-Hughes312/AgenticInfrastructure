@@ -6,16 +6,17 @@ Self-hosted multi-agent coding platform (LangGraph.js + Postgres + React). **All
 
 The UI is based on **[AgentLens](https://github.com/sanjayanasuri/AgentLens)** (MIT) — a LangGraph debugging cockpit with React Flow graph visualization, live WebSocket streaming, state inspector, and replay controls. See [`packages/web/ATTRIBUTION.md`](packages/web/ATTRIBUTION.md).
 
-We added a **Runs** page (`/runs`) with Langfuse trace + GitHub PR outbound links per the original plan.
+We added a **Runs** page (`/runs`) with optional Langfuse trace links and GitHub PR outbound links.
 
 ## Prerequisites
 
 - Node 18+
-- Postgres (Docker **or** Homebrew) for graph checkpoints
-- GitHub Copilot subscription + `GITHUB_COPILOT_TOKEN` (or `npm run copilot-login -w @agentic/server`)
-- OpenAI API key (fallback + embeddings)
-- GitHub PAT with `repo` scope
+- **Local Postgres** for graph checkpoints (`createdb agent_platform`)
+- **OpenAI API key** for all agent LLM calls (`OPENAI_API_KEY` in repo-root `.env`)
+- GitHub PAT with `repo` scope (when pushing to GitHub)
 - `DEFAULT_REPO_URL` in server `.env` (or create a project via API)
+
+**Optional:** Langfuse tracing — set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (cloud or self-hosted). The app runs fine without them.
 
 ## Quick start
 
@@ -37,36 +38,32 @@ Open http://localhost:5173 — home page to start a run, `/runs` for the monitor
 
 ## Database
 
-Port **5432** on macOS is often **local Homebrew Postgres** (user = your macOS username), not Docker’s `postgres` user.
-
-### Option A — Local Postgres (fastest if Docker is off)
+Use a **local Postgres** instance (Homebrew, Postgres.app, etc.). No Docker required.
 
 ```bash
 createdb agent_platform
 ```
 
-In `packages/server/.env`:
+In `packages/server/.env`, set `DATABASE_URL` to your local user (on macOS this is usually your login name, not `postgres`):
 
 ```bash
 DATABASE_URL=postgresql://YOUR_MAC_USERNAME@localhost:5432/agent_platform
 MEMORY_STORE=inmemory
 ```
 
-### Option B — Docker pgvector (production-like memory)
-
-Start **Docker Desktop**, then:
+`MEMORY_STORE=inmemory` keeps long-term agent memory in-process — simplest for local dev. For Postgres-backed semantic memory, install the `vector` extension and set `MEMORY_STORE=postgres`:
 
 ```bash
-docker compose up -d
+psql agent_platform -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 ```
 
-In `packages/server/.env`:
+## Langfuse (optional)
 
-```bash
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/agent_platform
-MEMORY_STORE=postgres
-```
+Tracing is off unless you provide keys. Either:
 
-Langfuse: `docker compose -f packages/server/docker-compose.langfuse.yml up -d` → http://localhost:3000
+- **Langfuse Cloud:** set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` (or `LANGFUSE_HOST`) in `packages/server/.env` or the repo-root `.env`
+- **Skip it:** leave keys blank — runs complete normally; trace links on `/runs` stay empty
+
+You can also paste keys in the in-app **Settings** panel at runtime.
 
 See [PLAN.md](PLAN.md) for phase-by-phase development.

@@ -10,6 +10,7 @@ import {
   subscribeRun,
   delegateToRun,
   getGraphSchemaAgentLens,
+  deleteRun,
 } from "../services/run-service.js";
 
 const createRunSchema = z.object({
@@ -72,6 +73,7 @@ export async function runRoutes(app: FastifyInstance) {
     return rows.map((r) => ({
       id: r.id,
       project_id: r.projectId,
+      chat_session_id: r.chatSessionId,
       status: r.status,
       task: r.task,
       branch: r.branch,
@@ -85,6 +87,14 @@ export async function runRoutes(app: FastifyInstance) {
       github_pr_url: r.githubPrUrl,
       error: r.error,
     }));
+  });
+
+  app.delete<{ Params: { id: string } }>("/runs/:id", async (req, reply) => {
+    const db = getAppDb();
+    const [run] = await db.select().from(runs).where(eq(runs.id, req.params.id)).limit(1);
+    if (!run) return reply.code(404).send({ error: "Run not found" });
+    await deleteRun(req.params.id);
+    return reply.send({ ok: true });
   });
 
   app.get<{ Params: { id: string } }>("/runs/:id/graph", async (req, reply) => {

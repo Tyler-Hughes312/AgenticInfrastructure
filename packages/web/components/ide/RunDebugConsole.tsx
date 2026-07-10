@@ -30,10 +30,17 @@ export default function RunDebugConsole({
   agentMetaMap,
 }: RunDebugConsoleProps) {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const attributed = useMemo(() => attributeEventsToAgents(events), [events]);
-  const allTools = useMemo(() => extractToolCalls(events), [events]);
-  const allGit = useMemo(() => extractGitActivity(events), [events]);
-  const allFiles = useMemo(() => extractFileChanges(events), [events]);
+  const workerIds = useMemo(
+    () => Object.keys(agentMetaMap).filter((id) => id !== "supervisor"),
+    [agentMetaMap]
+  );
+  const attributed = useMemo(
+    () => attributeEventsToAgents(events, workerIds),
+    [events, workerIds]
+  );
+  const allTools = useMemo(() => extractToolCalls(events, undefined, workerIds), [events, workerIds]);
+  const allGit = useMemo(() => extractGitActivity(events, undefined, workerIds), [events, workerIds]);
+  const allFiles = useMemo(() => extractFileChanges(events, undefined, workerIds), [events, workerIds]);
 
   const agentIds = useMemo(
     () => Object.keys(agentMetaMap).length ? Object.keys(agentMetaMap) : Object.keys(attributed),
@@ -47,7 +54,7 @@ export default function RunDebugConsole({
           <h3 className="text-sm font-semibold mb-3">Agents</h3>
           <div className="space-y-2">
             {agentIds.map((id) => {
-              const metrics = computeAgentMetrics(events, id);
+              const metrics = computeAgentMetrics(events, id, workerIds);
               const meta = agentMetaMap[id];
               const isSelected = selectedAgent === id;
               return (
@@ -74,7 +81,7 @@ export default function RunDebugConsole({
 
         <section className={sectionClass}>
           <h3 className="text-sm font-semibold mb-3">Run metrics</h3>
-          <CostLatencyPanel events={events} />
+          <CostLatencyPanel events={events} agentIds={workerIds} />
         </section>
       </div>
 
@@ -85,6 +92,7 @@ export default function RunDebugConsole({
               agentId={selectedAgent}
               agentMeta={agentMetaMap[selectedAgent]}
               events={events}
+              knownAgentIds={workerIds}
               onClose={() => setSelectedAgent(null)}
             />
           </div>

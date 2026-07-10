@@ -26,15 +26,30 @@ function providerOf(providerModel: string): string {
   return providerModel.split(":")[0] ?? "";
 }
 
+function hasCopilotCredentials(creds: RunCredentials): boolean {
+  return Boolean(creds.githubCopilotToken || creds.githubToken);
+}
+
 function hasProviderCredentials(provider: string, creds: RunCredentials): boolean {
-  if (provider === "copilot") return Boolean(creds.githubCopilotToken);
+  if (provider === "copilot") return hasCopilotCredentials(creds);
   if (provider === "openai") return Boolean(creds.openaiApiKey);
   return false;
 }
 
+function extraCandidatesForCredentials(creds: RunCredentials): string[] {
+  const extras: string[] = [];
+  if (hasCopilotCredentials(creds)) {
+    extras.push("copilot:gpt-4o", "copilot:gpt-4.1");
+  }
+  if (creds.openaiApiKey) {
+    extras.push("openai:gpt-4o", "openai:gpt-4.1");
+  }
+  return extras;
+}
+
 /**
  * Choose a model the current credentials can actually authenticate.
- * If the configured primary lacks credentials, fall back to a provider that does.
+ * Prefers configured primary/fallback, then only providers with credentials.
  */
 export function selectAuthenticatedModels(creds: RunCredentials): {
   primary: string;
@@ -48,9 +63,7 @@ export function selectAuthenticatedModels(creds: RunCredentials): {
   const candidates = [
     configuredPrimary,
     configuredFallback,
-    "openai:gpt-4o",
-    "openai:gpt-4.1",
-    "copilot:gpt-4o",
+    ...extraCandidatesForCredentials(creds),
   ];
 
   const usable = [...new Set(candidates)].filter((spec) => {
@@ -64,7 +77,7 @@ export function selectAuthenticatedModels(creds: RunCredentials): {
 
   if (!usable.length) {
     throw new Error(
-      "No LLM credentials available. Set OPENAI_API_KEY (or Copilot token) in the repo-root .env, or in Settings."
+      "No LLM credentials available. Set OPENAI_API_KEY in .env (recommended) or GITHUB_COPILOT_TOKEN in Settings."
     );
   }
 
@@ -78,10 +91,10 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
   const [provider, model] = assertModelAllowed(providerModel);
 
   if (provider === "copilot") {
-    const token = creds.githubCopilotToken;
+    const token = creds.githubCopilotToken ?? creds.githubToken;
     if (!token) {
       throw new Error(
-        "GitHub Copilot token required. Set GITHUB_COPILOT_TOKEN in .env or Settings."
+        "GitHub Copilot token required. Set GITHUB_COPILOT_TOKEN or GITHUB_TOKEN in .env, or run copilot-login."
       );
     }
     // Copilot serves OpenAI-compatible routes at /chat/completions (no /v1 prefix).
@@ -106,7 +119,7 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
     const apiKey = creds.openaiApiKey;
     if (!apiKey) {
       throw new Error(
-        "OpenAI API key required. Set OPENAI_API_KEY in the repo-root .env or in Settings."
+        "OpenAI API key required for this model. Set OPENAI_API_KEY or switch MODEL_PRIMARY to copilot:gpt-4o."
       );
     }
     if (apiKey.includes("unused-wrapper") || apiKey === "unused-wrapper") {
@@ -133,7 +146,7 @@ function resolveModelNow(_useFallback = true): ChatOpenAI {
 
   if (providerOf(primaryModel) !== providerOf(creds.modelPrimary ?? env.MODEL_PRIMARY)) {
     console.warn(
-      `Using ${primaryModel} because configured primary lacks credentials (have openai=${Boolean(creds.openaiApiKey)} copilot=${Boolean(creds.githubCopilotToken)})`
+      `Using ${primaryModel} because configured primary lacks credentials (have openai=${Boolean(creds.openaiApiKey)} copilot=${hasCopilotCredentials(creds)})`
     );
   }
 
@@ -163,7 +176,9 @@ export function getEmbeddings(credentials?: RunCredentials) {
   const creds = resolveCredentials(credentials);
   const [, model] = assertModelAllowed(env.EMBEDDING_MODEL);
   if (!creds.openaiApiKey) {
-    throw new Error("OpenAI API key required for embeddings. Set OPENAI_API_KEY in .env.");
+    throw new Error(
+      "OpenAI API key required for embeddings. Set OPENAI_API_KEY or use MEMORY_STORE=inmemory (semantic search disabled)."
+    );
   }
   return new OpenAIEmbeddings({
     model,

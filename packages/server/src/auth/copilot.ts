@@ -54,7 +54,7 @@ async function pollAccessToken(deviceCode: string, interval: number): Promise<st
   }
 }
 
-async function exchangeCopilotToken(githubToken: string): Promise<string> {
+export async function exchangeCopilotToken(githubToken: string): Promise<string> {
   const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
     headers: {
       Authorization: `Bearer ${githubToken}`,

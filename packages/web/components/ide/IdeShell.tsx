@@ -5,18 +5,18 @@ import { useSearchParams } from "next/navigation";
 import IdeLayout from "./IdeLayout";
 import ObservabilityTabs from "./ObservabilityTabs";
 import OrchestratorChat from "./OrchestratorChat";
-import { useRunSession } from "../../hooks/useRunSession";
+import { useRunSessionContext } from "../run/RunSessionProvider";
 import { useOrchestrator } from "../orchestrator/OrchestratorProvider";
+import { useChatSession } from "../chat/ChatSessionProvider";
 import { parseOrchestratorMessage } from "../../lib/parse-chat-launch";
 
 function IdeShellContent() {
   const searchParams = useSearchParams();
-  const runIdParam = searchParams.get("runId");
   const questionParam = searchParams.get("question");
   const autoStartedRef = useRef(false);
-  const { config, agentIds, applyRemoteConfig, resetToDefault } = useOrchestrator();
-
-  const session = useRunSession(runIdParam);
+  const { config, agentIds } = useOrchestrator();
+  const { sessionId, projectId, messages, startNewSession, setMessages } = useChatSession();
+  const session = useRunSessionContext();
 
   useEffect(() => {
     if (!questionParam || autoStartedRef.current || session.hasStarted) return;
@@ -24,34 +24,34 @@ function IdeShellContent() {
     const parsed = parseOrchestratorMessage(decodeURIComponent(questionParam), agentIds);
     session.startTask(parsed.task, {
       targetAgent: parsed.targetAgent,
-      orchestratorConfig: config,
+      orchestratorConfig: config.agents.length ? config : undefined,
+      chatSessionId: sessionId ?? undefined,
+      projectId: projectId ?? undefined,
     });
-  }, [questionParam, session.hasStarted, session.startTask, agentIds, config]);
-
-  // When the server auto-deploys a pipeline, mirror it onto the live graph canvas.
-  useEffect(() => {
-    for (let i = session.events.length - 1; i >= 0; i--) {
-      const e = session.events[i];
-      if (e.event !== "orchestrator_graph_updated") continue;
-      const next = (e.data as { config?: typeof config } | undefined)?.config;
-      if (next && Array.isArray(next.agents)) {
-        applyRemoteConfig(next);
-      }
-      break;
-    }
-  }, [session.events, applyRemoteConfig]);
+  }, [questionParam, session.hasStarted, session.startTask, agentIds, config, sessionId, projectId]);
 
   function handleSend(message: string) {
     const parsed = parseOrchestratorMessage(message, agentIds);
     const options = {
       targetAgent: parsed.targetAgent,
       orchestratorConfig: config,
+      chatSessionId: sessionId ?? undefined,
+      projectId: projectId ?? undefined,
     };
     if (session.hasStarted) {
       session.sendFollowUp(parsed.task, options);
     } else {
       session.startTask(parsed.task, options);
     }
+  }
+
+  function handleClearChat() {
+    setMessages([]);
+  }
+
+  async function handleNewGraph() {
+    session.resetSession();
+    await startNewSession();
   }
 
   return (
@@ -78,10 +78,13 @@ function IdeShellContent() {
           error={session.error}
           actualRunId={session.actualRunId}
           isRunning={session.isRunning}
+          initialMessages={messages}
+          onMessagesChange={setMessages}
+          sessionId={sessionId}
           onSend={handleSend}
-          onReset={() => {
-            session.resetSession();
-            void resetToDefault();
+          onClearChat={handleClearChat}
+          onNewGraph={() => {
+            void handleNewGraph();
           }}
         />
       }

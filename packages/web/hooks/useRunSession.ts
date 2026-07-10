@@ -13,6 +13,8 @@ function isCriticalEvent(e: RunEvent): boolean {
       e.event === "on_chain_start" ||
       e.event === "on_node_end" ||
       e.event === "on_node_start" ||
+      e.event === "on_tool_start" ||
+      e.event === "on_tool_end" ||
       e.event === "on_chat_model_end" ||
       e.event === "orchestrator_graph_updated" ||
       e.event === "error"
@@ -28,7 +30,10 @@ function cleanState(state: Record<string, unknown>): Record<string, unknown> {
   return clean;
 }
 
-export function useRunSession(initialRunId?: string | null) {
+export function useRunSession(
+  initialRunId?: string | null,
+  options?: { persist?: boolean }
+) {
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
@@ -210,12 +215,13 @@ export function useRunSession(initialRunId?: string | null) {
   }, [initialRunId, processEvent]);
 
   useEffect(() => {
+    if (options?.persist) return;
     return () => {
       intentionalCloseRef.current = true;
       sessionRef.current?.close();
       sessionRef.current = null;
     };
-  }, []);
+  }, [options?.persist]);
 
   const validReplayIndex = useMemo(() => {
     if (snapshots.length === 0) return 0;

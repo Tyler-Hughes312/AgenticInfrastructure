@@ -6,7 +6,7 @@ import { execSync } from "node:child_process";
 import { setRunContext, clearRunContext } from "../src/tools/context.js";
 import { readFile, editFile } from "../src/tools/file-editor.js";
 import { shellTool } from "../src/tools/shell.js";
-import { gitDiff, gitCommit } from "../src/tools/git-ops.js";
+import { gitDiff, gitCommit, embedTokenInHttpsUrl } from "../src/tools/git-ops.js";
 
 const runId = "test-run";
 let workspace: string;
@@ -56,6 +56,12 @@ describe("shell tool", () => {
 });
 
 describe("git tools", () => {
+  it("embeds github token in https remote url", () => {
+    expect(embedTokenInHttpsUrl("https://github.com/o/r.git", "secret")).toBe(
+      "https://x-access-token:secret@github.com/o/r.git"
+    );
+  });
+
   it("shows diff and commits", async () => {
     writeFileSync(join(workspace, "foo.txt"), "hello");
     const diff = await gitDiff.invoke({}, config);

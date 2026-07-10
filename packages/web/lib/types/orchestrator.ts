@@ -4,11 +4,28 @@ export type CustomAgentConfig = {
   role: string;
   prompt?: string;
   tools: string[];
+  skills?: string[];
   model?: string;
   routesTo: string[];
   launchWhen?: string[];
   doNotLaunchWhen?: string[];
   position?: { x: number; y: number };
+};
+
+export type SkillCategory =
+  | "research"
+  | "planning"
+  | "development"
+  | "quality"
+  | "devops"
+  | "communication";
+
+export type SkillDefinition = {
+  id: string;
+  label: string;
+  description: string;
+  category: SkillCategory;
+  tools: string[];
 };
 
 export type GraphEdgeConfig = {
@@ -36,5 +53,6 @@ export type OrchestratorGraphResponse = {
     edges: GraphEdgeConfig[];
   };
   available_tools: string[];
+  available_skills?: SkillDefinition[];
   routing?: unknown;
 };

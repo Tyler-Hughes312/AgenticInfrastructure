@@ -8,6 +8,8 @@ export interface RunContext {
   repoUrl: string;
   githubToken: string;
   branch: string;
+  chatSessionId?: string;
+  sessionScoped?: boolean;
 }
 
 const contexts = new Map<string, RunContext>();
@@ -30,6 +32,16 @@ export function getRunContextFromConfig(config?: RunnableConfig): RunContext {
     throw new Error(`No run context for run_id=${runId}`);
   }
   return ctx;
+}
+
+export function patchRunContext(runId: string, patch: Partial<RunContext>): RunContext {
+  const ctx = contexts.get(runId);
+  if (!ctx) {
+    throw new Error(`No run context for run_id=${runId}`);
+  }
+  const next = { ...ctx, ...patch };
+  contexts.set(runId, next);
+  return next;
 }
 
 export function resolveInWorkspace(workspaceDir: string, relativePath: string): string {
