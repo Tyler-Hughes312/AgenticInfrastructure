@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ChatMessageBubble from "./ChatMessage";
 import SupervisorRoutingPanel from "../SupervisorRoutingPanel";
 import { useOrchestratorChat } from "../../hooks/useOrchestratorChat";
 import { setChatPanelOpen } from "../../lib/ide-chat-panel";
+import { statusLabel } from "../../lib/chat-message-utils";
 import {
   APPROVE_AND_PUBLISH_PROMPT,
   needsPublishApproval,
@@ -14,6 +15,13 @@ import { useOrchestrator } from "../orchestrator/OrchestratorProvider";
 import WorkspaceOutputsStrip from "./WorkspaceOutputsStrip";
 import type { ChatMessage } from "../../lib/types/chat";
 import type { RunEvent, RunSessionStatus } from "../../lib/types/run";
+
+const QUICK_PROMPTS = [
+  "Build a full software dev team",
+  "Implement a todo app in TypeScript",
+  "Add a QA agent to the graph",
+  "Research and write a short report",
+] as const;
 
 type OrchestratorChatProps = {
   agentIds?: string[];
@@ -27,11 +35,8 @@ type OrchestratorChatProps = {
   onMessagesChange?: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   sessionId?: string | null;
   onSend: (message: string) => void;
-  /** Clear chat messages only — keeps graph and run session. */
   onClearChat?: () => void;
-  /** Reset to blank canvas + new chat session. */
   onNewGraph?: () => void;
-  /** @deprecated use onClearChat */
   onReset?: () => void;
 };
 
@@ -79,7 +84,7 @@ export default function OrchestratorChat({
     [onMessagesChange]
   );
 
-  useOrchestratorChat({
+  const { statusText } = useOrchestratorChat({
     events,
     shownState,
     status,
@@ -91,14 +96,11 @@ export default function OrchestratorChat({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isRunning, statusText]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
-    if (
-      last?.role === "assistant" &&
-      last.content.includes("Reply **yes**")
-    ) {
+    if (last?.role === "assistant" && last.content.includes("Reply **yes**")) {
       setPendingConfirmation(last.content);
     } else {
       setPendingConfirmation(null);
@@ -185,9 +187,10 @@ export default function OrchestratorChat({
     sendText(APPROVE_AND_PUBLISH_PROMPT);
   }
 
+  const headerStatus = statusLabel(status, isRunning);
   const statusDot =
-    status === "running"
-      ? "bg-emerald-400 animate-pulse"
+    isRunning
+      ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)] animate-pulse"
       : status === "error"
         ? "bg-red-400"
         : status === "completed"
@@ -196,147 +199,225 @@ export default function OrchestratorChat({
 
   return (
     <div className="flex flex-col h-full w-full min-h-0 min-w-[280px] bg-charcoal-bg text-charcoal-text">
-      <header className="shrink-0 px-3 py-2.5 border-b border-charcoal-border flex items-center justify-between gap-2 flex-wrap bg-charcoal-surface">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
-          <h2 className="text-sm font-semibold truncate">Orchestrator</h2>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => setShowRouting((v) => !v)}
-            className="text-xs text-charcoal-muted hover:text-charcoal-text px-2 py-1 rounded hover:bg-charcoal-raised"
-          >
-            Routing
-          </button>
-          <button
-            type="button"
-            onClick={() => setChatPanelOpen(false)}
-            className="text-xs text-charcoal-muted hover:text-charcoal-text px-2 py-1 rounded hover:bg-charcoal-raised"
-            title="Close chat panel"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={handleClearChat}
-            className="text-xs text-charcoal-muted hover:text-charcoal-text px-2 py-1 rounded hover:bg-charcoal-raised"
-            title="Clear chat messages only"
-          >
-            Clear chat
-          </button>
-          <button
-            type="button"
-            onClick={handleNewGraph}
-            disabled={isRunning}
-            className="text-xs text-charcoal-muted hover:text-charcoal-text px-2 py-1 rounded hover:bg-charcoal-raised disabled:opacity-40"
-            title="Blank canvas and new session"
-          >
-            New graph
-          </button>
+      <header className="shrink-0 px-3 py-2.5 border-b border-charcoal-border bg-charcoal-surface/95 backdrop-blur-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot}`} />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold truncate leading-tight">Orchestrator</h2>
+              <p className="text-[10px] text-charcoal-muted truncate">
+                {isRunning ? statusText : headerStatus}
+                {agentIds.length > 1 && ` · ${agentIds.filter((id) => id !== "supervisor").length} agents`}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <HeaderBtn onClick={() => setShowRouting((v) => !v)} active={showRouting} title="Routing rules">
+              Route
+            </HeaderBtn>
+            <HeaderBtn onClick={handleClearChat} title="Clear messages">
+              Clear
+            </HeaderBtn>
+            <HeaderBtn onClick={handleNewGraph} disabled={isRunning} title="New session">
+              New
+            </HeaderBtn>
+            <HeaderBtn onClick={() => setChatPanelOpen(false)} title="Close panel">
+              ✕
+            </HeaderBtn>
+          </div>
         </div>
       </header>
 
       {showRouting && (
-        <div className="shrink-0 border-b border-charcoal-border p-3 max-h-48 overflow-auto bg-charcoal-surface">
+        <div className="shrink-0 border-b border-charcoal-border p-3 max-h-44 overflow-auto bg-charcoal-surface">
           <SupervisorRoutingPanel />
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-4 space-y-1">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-3 scroll-smooth"
+      >
         {messages.length === 0 ? (
-          <div className="px-3 py-8 text-center">
-            <p className="text-sm text-charcoal-muted mb-2">Chat with the orchestrator</p>
-            <p className="text-xs text-charcoal-muted/70 break-words">
-              Describe a task, or edit the graph:{" "}
+          <div className="px-4 py-6">
+            <div className="rounded-xl border border-charcoal-border/70 bg-charcoal-surface/50 p-4 mb-4">
+              <p className="text-sm font-medium text-charcoal-text mb-1">What should the team build?</p>
+              <p className="text-xs text-charcoal-muted leading-relaxed">
+                Describe a deliverable, set up agents, or edit the graph with natural language.
+              </p>
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-charcoal-muted/70 mb-2 px-1">
+              Try asking
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {QUICK_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  disabled={isRunning}
+                  onClick={() => {
+                    setInput(prompt);
+                    sendText(prompt);
+                  }}
+                  className="text-left text-xs px-3 py-2 rounded-lg border border-charcoal-border bg-charcoal-raised/50 text-charcoal-muted hover:text-charcoal-text hover:border-charcoal-accent/40 hover:bg-charcoal-raised transition-colors disabled:opacity-40"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-charcoal-muted/60 mt-4 px-1 leading-relaxed">
+              Graph edits:{" "}
               <code className="text-charcoal-muted">add researcher</code>,{" "}
-              <code className="text-charcoal-muted">connect researcher → writer</code>,{" "}
-              <code className="text-charcoal-muted">remove publisher</code>,{" "}
-              <code className="text-charcoal-muted">rebuild graph for a 3-stage essay</code>.
-              {agentIds.length > 1 && (
-                <>
-                  {" "}
-                  Agents: {agentIds.filter((id) => id !== "supervisor").join(", ")}.
-                </>
-              )}
+              <code className="text-charcoal-muted">connect a → b</code>
             </p>
           </div>
         ) : (
-          messages.map((message) => <ChatMessageBubble key={message.id} message={message} />)
+          <div className="divide-y divide-charcoal-border/40">
+            {messages.map((message) => (
+              <ChatMessageBubble
+                key={message.id}
+                message={message}
+                isLive={message.role === "status" && isRunning}
+              />
+            ))}
+          </div>
         )}
       </div>
 
-      <div className="shrink-0 border-t border-charcoal-border p-3 bg-charcoal-surface space-y-2">
+      <div className="shrink-0 border-t border-charcoal-border bg-charcoal-surface/95 backdrop-blur-sm p-3 space-y-2.5">
         <WorkspaceOutputsStrip sessionId={sessionId} refreshKey={actualRunId ?? status} />
+
         {showApprove && (
-          <div className="rounded-lg border border-charcoal-accent/40 bg-charcoal-accent/10 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-charcoal-muted">
-              Review finished — publisher is waiting. Approve to ship (commit / push / PR).
-            </p>
+          <ActionBanner
+            message="Review finished — publisher is waiting. Approve to ship."
+            primaryLabel="Approve & publish"
+            onPrimary={handleApproveAndPublish}
+            disabled={isRunning}
+          />
+        )}
+
+        {pendingConfirmation && !isRunning && (
+          <ActionBanner
+            message="Confirm this graph edit?"
+            primaryLabel="Confirm"
+            secondaryLabel="Cancel"
+            onPrimary={() => {
+              setPendingConfirmation(null);
+              sendText("yes");
+            }}
+            onSecondary={() => {
+              setPendingConfirmation(null);
+              sendText("cancel");
+            }}
+          />
+        )}
+
+        <div
+          className={`relative rounded-xl border transition-colors ${
+            isRunning
+              ? "border-charcoal-border bg-charcoal-raised/30"
+              : "border-charcoal-border focus-within:border-charcoal-accent/50 focus-within:ring-2 focus-within:ring-charcoal-accent/20 bg-charcoal-raised"
+          }`}
+        >
+          <textarea
+            className="w-full box-border bg-transparent rounded-xl px-3 pt-2.5 pb-10 text-sm text-charcoal-text placeholder:text-charcoal-muted/50 resize-none focus:outline-none break-words disabled:opacity-60"
+            placeholder={isRunning ? "Agents are working…" : "Message the orchestrator…"}
+            rows={3}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            disabled={isRunning}
+          />
+          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-2.5 py-2 border-t border-charcoal-border/40">
+            <span className="text-[10px] text-charcoal-muted/60">
+              {isRunning ? "Pipeline running" : "Enter to send · Shift+Enter for newline"}
+            </span>
             <button
               type="button"
-              onClick={handleApproveAndPublish}
-              disabled={isRunning}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md bg-emerald-600 text-white hover:brightness-110 disabled:opacity-40"
+              onClick={handleSend}
+              disabled={!input.trim() || isRunning}
+              className="px-3 py-1 text-xs font-semibold rounded-lg bg-charcoal-accent text-white hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
-              Approve &amp; publish
+              Send
             </button>
           </div>
-        )}
-        {pendingConfirmation && !isRunning && (
-          <div className="rounded-lg border border-charcoal-accent/40 bg-charcoal-accent/10 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-charcoal-muted">
-              Confirm graph edit?
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setPendingConfirmation(null);
-                  sendText("yes");
-                }}
-                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-emerald-600 text-white hover:brightness-110"
-              >
-                Confirm
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPendingConfirmation(null);
-                  sendText("cancel");
-                }}
-                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-charcoal-raised text-charcoal-muted hover:bg-charcoal-border"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-        <textarea
-          className="w-full box-border bg-charcoal-raised border border-charcoal-border rounded-xl px-3 py-2.5 text-sm text-charcoal-text placeholder:text-charcoal-muted/60 resize-none focus:outline-none focus:ring-2 focus:ring-charcoal-accent/40 focus:border-charcoal-accent/50 break-words"
-          placeholder='Ask the orchestrator, or type "approve" to ship…'
-          rows={3}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          disabled={isRunning}
-        />
-        <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
-          <span className="text-xs text-charcoal-muted/60 shrink-0">Cmd/Ctrl + Enter</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeaderBtn({
+  children,
+  onClick,
+  disabled,
+  active,
+  title,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`text-[11px] px-2 py-1 rounded-md transition-colors disabled:opacity-40 ${
+        active
+          ? "bg-charcoal-accent/20 text-charcoal-accent"
+          : "text-charcoal-muted hover:text-charcoal-text hover:bg-charcoal-raised"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ActionBanner({
+  message,
+  primaryLabel,
+  secondaryLabel,
+  onPrimary,
+  onSecondary,
+  disabled,
+}: {
+  message: string;
+  primaryLabel: string;
+  secondaryLabel?: string;
+  onPrimary: () => void;
+  onSecondary?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-amber-500/25 bg-amber-950/15 px-3 py-2.5 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs text-charcoal-muted">{message}</p>
+      <div className="flex gap-2 shrink-0">
+        {secondaryLabel && onSecondary && (
           <button
             type="button"
-            onClick={handleSend}
-            disabled={!input.trim() || isRunning}
-            className="px-4 py-1.5 text-sm font-medium rounded-lg bg-charcoal-accent text-white hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            onClick={onSecondary}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-charcoal-raised text-charcoal-muted hover:bg-charcoal-border"
           >
-            Send
+            {secondaryLabel}
           </button>
-        </div>
+        )}
+        <button
+          type="button"
+          onClick={onPrimary}
+          disabled={disabled}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:brightness-110 disabled:opacity-40"
+        >
+          {primaryLabel}
+        </button>
       </div>
     </div>
   );

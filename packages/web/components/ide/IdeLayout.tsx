@@ -1,36 +1,54 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import ActivityBar from "./ActivityBar";
-import { CHAT_OPEN_KEY, setChatPanelOpen } from "../../lib/ide-chat-panel";
+import {
+  CHAT_OPEN_KEY,
+  DEFAULT_CHAT_WIDTH,
+  MIN_CHAT_WIDTH,
+  MAX_CHAT_WIDTH_RATIO,
+  getStoredChatWidth,
+  setChatPanelOpen,
+  setStoredChatWidth,
+} from "../../lib/ide-chat-panel";
 
 type IdeLayoutProps = {
   main: ReactNode;
   chat: ReactNode;
+  contextBar?: ReactNode;
 };
 
-const DEFAULT_CHAT_WIDTH = 420;
-const MIN_CHAT_WIDTH = 320;
-const MAX_CHAT_WIDTH_RATIO = 0.5;
-const CHAT_OPEN_KEY_LOCAL = CHAT_OPEN_KEY;
-
-export default function IdeLayout({ main, chat }: IdeLayoutProps) {
+export default function IdeLayout({ main, chat, contextBar }: IdeLayoutProps) {
+  const pathname = usePathname();
   const [chatOpen, setChatOpen] = useState(true);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(DEFAULT_CHAT_WIDTH);
+  const chatWidthRef = useRef(chatWidth);
+  chatWidthRef.current = chatWidth;
 
   useEffect(() => {
-    const stored = localStorage.getItem(CHAT_OPEN_KEY_LOCAL);
-    if (stored !== null) setChatOpen(stored === "true");
+    const stored = localStorage.getItem(CHAT_OPEN_KEY);
+    if (stored !== null) {
+      setChatOpen(stored === "true");
+    } else {
+      setChatOpen(pathname !== "/code");
+    }
+
+    const storedWidth = getStoredChatWidth();
+    if (storedWidth !== null) {
+      const maxWidth = Math.floor(window.innerWidth * MAX_CHAT_WIDTH_RATIO);
+      setChatWidth(Math.min(maxWidth, Math.max(MIN_CHAT_WIDTH, storedWidth)));
+    }
 
     const handler = (e: Event) => {
       setChatOpen((e as CustomEvent<boolean>).detail);
     };
     window.addEventListener("ide-chat-open", handler);
     return () => window.removeEventListener("ide-chat-open", handler);
-  }, []);
+  }, [pathname]);
 
   const setChatOpenPersisted = useCallback((open: boolean) => {
     setChatOpen(open);
@@ -46,6 +64,9 @@ export default function IdeLayout({ main, chat }: IdeLayoutProps) {
   }, []);
 
   const onMouseUp = useCallback(() => {
+    if (dragging.current) {
+      setStoredChatWidth(chatWidthRef.current);
+    }
     dragging.current = false;
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
@@ -71,25 +92,28 @@ export default function IdeLayout({ main, chat }: IdeLayoutProps) {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-charcoal-bg relative">
       <ActivityBar />
-      <div className="flex flex-1 min-w-0 min-h-0 h-full">
-        <div className="flex-1 min-w-0 h-full overflow-hidden">{main}</div>
-        {chatOpen && (
-          <>
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize chat panel"
-              onMouseDown={startResize}
-              className="w-1 shrink-0 cursor-col-resize bg-charcoal-border hover:bg-charcoal-accent/60 transition-colors"
-            />
-            <div
-              className="shrink-0 h-full overflow-hidden border-l border-charcoal-border"
-              style={{ width: chatWidth, minWidth: MIN_CHAT_WIDTH }}
-            >
-              {chat}
-            </div>
-          </>
-        )}
+      <div className="flex flex-1 min-w-0 min-h-0 h-full flex-col">
+        {contextBar}
+        <div className="flex flex-1 min-w-0 min-h-0">
+          <div className="flex-1 min-w-0 h-full overflow-hidden">{main}</div>
+          {chatOpen && (
+            <>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize chat panel"
+                onMouseDown={startResize}
+                className="w-1 shrink-0 cursor-col-resize bg-charcoal-border hover:bg-charcoal-accent/60 transition-colors"
+              />
+              <div
+                className="shrink-0 h-full overflow-hidden border-l border-charcoal-border"
+                style={{ width: chatWidth, minWidth: MIN_CHAT_WIDTH }}
+              >
+                {chat}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {!chatOpen && (

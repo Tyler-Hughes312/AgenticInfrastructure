@@ -41,12 +41,13 @@ export default function WorkspaceOutputsStrip({
     void load();
   }, [load, refreshKey]);
 
-  const paths = [
+  const allPaths = [
     ...recent.map((r) => r.path),
     ...deliverables.filter((p) => !recent.some((r) => r.path === p)),
-  ].slice(0, expanded ? 20 : 6);
+  ];
+  const paths = allPaths.slice(0, expanded ? 20 : 6);
 
-  if (!sessionId || paths.length === 0) return null;
+  if (!sessionId || allPaths.length === 0) return null;
 
   return (
     <div className="rounded-lg border border-charcoal-border bg-charcoal-raised/40 px-3 py-2 space-y-2">
@@ -59,7 +60,7 @@ export default function WorkspaceOutputsStrip({
           >
             Open Code IDE
           </Link>
-          {paths.length > 6 && (
+          {allPaths.length > 6 && (
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}

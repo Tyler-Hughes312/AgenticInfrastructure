@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { apiUrl } from "../app/api-client";
 
 export default function DriftPanel({ state }: { state: any }) {
   const [drift, setDrift] = useState<any>(null);
@@ -24,7 +25,7 @@ export default function DriftPanel({ state }: { state: any }) {
       
       setLoading(true);
       try {
-        const res = await fetch("http://localhost:8000/api/drift", {
+        const res = await fetch(apiUrl("/api/drift"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: stateStr,

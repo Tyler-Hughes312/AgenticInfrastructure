@@ -68,7 +68,8 @@ const assistantComponents: Components = {
   td: ({ children }) => (
     <td className="border border-charcoal-border px-2 py-1 align-top">{children}</td>
   ),
-  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  strong: ({ children }) => <strong className="font-semibold text-charcoal-text">{children}</strong>,
+  em: ({ children }) => <em className="text-charcoal-muted not-italic">{children}</em>,
 };
 
 const userComponents: Components = {
