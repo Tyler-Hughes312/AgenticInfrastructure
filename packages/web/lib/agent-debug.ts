@@ -7,6 +7,7 @@ export type AgentMeta = {
   role: string;
   tools: string[];
   routesTo: string[];
+  model?: string;
 };
 
 export type ToolCallRecord = {

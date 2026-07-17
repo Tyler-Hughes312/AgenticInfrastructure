@@ -12,7 +12,9 @@
     "test": "npm run test -w @agentic/server",
     "doctor": "npm run doctor -w @agentic/server",
     "setup:db": "npm run setup:db -w @agentic/server",
-    "setup:copilot": "npm run setup:copilot -w @agentic/server"
+    "setup:copilot": "npm run setup:copilot -w @agentic/server --",
+    "setup:minimal": "npm run setup:minimal -w @agentic/server --",
+    "test:e2e": "npm run test:e2e -w @agentic/server --"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

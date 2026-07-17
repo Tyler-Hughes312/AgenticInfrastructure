@@ -9,6 +9,7 @@ import { publishHandoff, readPipelineContext } from "../tools/pipeline-handoff.j
 import { getModelForAgent } from "../models-llm.js";
 import type { AgentRoutingRule } from "./routing-policy.js";
 import { enrichAgentWithSkills } from "./skill-catalog.js";
+import { suggestModelForRole } from "./role-model-presets.js";
 
 export const AVAILABLE_TOOL_NAMES = [
   "shell",
@@ -192,7 +193,18 @@ export function normalizeOrchestratorConfig(
     };
   }
   return {
-    agents: syncRoutesToFromEdges(agents, edges).map(enrichAgentWithSkills),
+    agents: syncRoutesToFromEdges(agents, edges).map((agent) => {
+      const enriched = enrichAgentWithSkills(agent);
+      if (enriched.model?.trim()) return enriched;
+      return {
+        ...enriched,
+        model: suggestModelForRole({
+          label: enriched.label,
+          role: enriched.role,
+          tools: enriched.tools,
+        }),
+      };
+    }),
     edges,
     supervisorModel: input.supervisorModel,
     deliverableMode: input.deliverableMode,

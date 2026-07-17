@@ -1,16 +1,12 @@
 /**
- * Windows/macOS Copilot bootstrap:
- * - copies .env.example → .env if missing
- * - prints next steps / runs device login when --login is passed
+ * Windows/macOS/Linux Copilot bootstrap.
  *
- * Usage:
  *   npm run setup:copilot
- *   npm run setup:copilot -- --login
+ *   npm run setup:copilot -- --login   # device code → tokens auto-written to .env
  */
 import { existsSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverDir = resolve(__dirname, "..");
@@ -26,10 +22,6 @@ function ensureEnv(target: string, example: string, label: string) {
   if (existsSync(target)) {
     console.log(`[ok] ${label} already exists`);
     return;
-  }
-  if (!existsSync(example)) {
-    console.error(`[fail] missing ${example}`);
-    process.exit(1);
   }
   copyFileSync(example, target);
   console.log(`[ok] created ${label} from example`);
@@ -50,6 +42,9 @@ function patchModelDefaults(envPath: string) {
   if (!/^GITHUB_COPILOT_OAUTH_TOKEN=/m.test(text)) {
     text = `${text.trimEnd()}\nGITHUB_COPILOT_OAUTH_TOKEN=\n`;
   }
+  if (!/^GITHUB_COPILOT_TOKEN=/m.test(text)) {
+    text = `${text.trimEnd()}\nGITHUB_COPILOT_TOKEN=\n`;
+  }
   writeFileSync(envPath, text.endsWith("\n") ? text : `${text}\n`);
 }
 
@@ -62,26 +57,27 @@ if (existsSync(resolve(repoRoot, ".env"))) {
   console.log("[ok] patched repo-root .env model defaults (overrides server .env)");
 }
 
-const wantLogin = process.argv.includes("--login");
+const wantLogin =
+  process.argv.includes("--login") ||
+  process.argv.includes("login") ||
+  process.env.COPILOT_LOGIN === "1";
 if (wantLogin) {
-  console.log("\nStarting GitHub device login for Copilot…\n");
-  const r = spawnSync("npx", ["tsx", "src/auth/copilot-cli.ts"], {
-    cwd: serverDir,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  process.exit(r.status ?? 1);
+  console.log("\nGitHub device login — tokens will be written to .env automatically.\n");
+  const { acquireCopilotToken } = await import("../src/auth/copilot.js");
+  await acquireCopilotToken(true);
+  process.exit(0);
 }
 
 console.log(`
 Next steps:
-  1. Edit packages/server/.env — set DATABASE_URL for your machine
-       Windows: postgresql://postgres:PASSWORD@localhost:5432/agent_platform
-       macOS:   postgresql://YOUR_USERNAME@localhost:5432/agent_platform
+  1. Edit packages/server/.env DATABASE_URL if needed
   2. npm run setup:db
   3. npm run setup:copilot -- --login
+       → open GitHub, enter the code, tokens land in packages/server/.env
   4. npm run doctor
-  5. npm run dev
+  5. npm run test:e2e
+  6. npm run dev
 
-Full guide: docs/COPILOT-SETUP.md
+Or start from a clean minimal profile: npm run setup:minimal
+Guide: docs/COPILOT-SETUP.md
 `);

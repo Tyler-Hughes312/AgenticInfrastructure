@@ -24,6 +24,7 @@ import "reactflow/dist/style.css";
 type AgentNodeData = {
   label: string;
   role?: string;
+  model?: string;
   tools?: string[];
   status: "idle" | "running" | "done";
   toolCount: number;
@@ -100,6 +101,9 @@ function AgentFlowNode({ data }: NodeProps<AgentNodeData>) {
         </div>
         {data.role && (
           <p className="text-[10px] text-charcoal-muted mt-1 line-clamp-2 leading-tight">{data.role}</p>
+        )}
+        {data.model && (
+          <p className="text-[9px] font-mono text-charcoal-accent/90 mt-1 truncate">{data.model}</p>
         )}
         <div className="flex items-center gap-2 mt-2 text-[10px] text-charcoal-muted">
           <span>{data.toolCount} tools</span>
@@ -256,6 +260,7 @@ export default function GraphViewer({
         role: agentConfig.role,
         tools: agentConfig.tools,
         routesTo: agentConfig.routesTo,
+        model: agentConfig.model,
       } : undefined);
       const metrics = computeAgentMetrics(events, n.id, workerIds);
       const toolCount = extractToolCalls(events, n.id, workerIds).length;
@@ -272,6 +277,7 @@ export default function GraphViewer({
         data: {
           label: meta?.label ?? n.label,
           role: meta?.role,
+          model: meta?.model ?? agentConfig?.model,
           tools: meta?.tools,
           status,
           toolCount,

@@ -28,6 +28,7 @@ type OrchestratorContextValue = {
   saveConfig: (next: OrchestratorGraphConfig) => Promise<void>;
   applyRemoteConfig: (next: OrchestratorGraphConfig) => void;
   updateAgentPosition: (agentId: string, position: { x: number; y: number }) => void;
+  updateAgent: (agentId: string, patch: Partial<CustomAgentConfig>) => Promise<void>;
   addAgent: (agent: CustomAgentConfig) => Promise<void>;
   removeAgent: (agentId: string) => Promise<void>;
   addEdge: (edge: GraphEdgeConfig) => Promise<void>;
@@ -123,6 +124,17 @@ export function OrchestratorProvider({
     [sessionId]
   );
 
+  const updateAgent = useCallback(
+    async (agentId: string, patch: Partial<CustomAgentConfig>) => {
+      const next: OrchestratorGraphConfig = {
+        ...config,
+        agents: config.agents.map((a) => (a.id === agentId ? { ...a, ...patch, id: a.id } : a)),
+      };
+      await saveConfig(next);
+    },
+    [config, saveConfig]
+  );
+
   const addAgent = useCallback(
     async (agent: CustomAgentConfig) => {
       const next: OrchestratorGraphConfig = {
@@ -213,6 +225,7 @@ export function OrchestratorProvider({
       saveConfig,
       applyRemoteConfig,
       updateAgentPosition,
+      updateAgent,
       addAgent,
       removeAgent,
       addEdge,
@@ -230,6 +243,7 @@ export function OrchestratorProvider({
       saveConfig,
       applyRemoteConfig,
       updateAgentPosition,
+      updateAgent,
       addAgent,
       removeAgent,
       addEdge,

@@ -11,7 +11,9 @@
     "doctor": "tsx scripts/doctor.ts",
     "setup:db": "tsx scripts/setup-db.ts",
     "setup:copilot": "tsx scripts/setup-copilot.ts",
-    "copilot-login": "tsx src/auth/copilot-cli.ts"
+    "setup:minimal": "tsx scripts/setup-minimal.ts",
+    "copilot-login": "tsx src/auth/copilot-cli.ts",
+    "test:e2e": "vitest run tests/e2e-platform.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

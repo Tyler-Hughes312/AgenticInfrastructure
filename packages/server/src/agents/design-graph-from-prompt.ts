@@ -16,6 +16,7 @@ import type { GraphEditCommand } from "./graph-edit.js";
 import { applyGraphEdit } from "./graph-edit.js";
 import { inferToolsFromSkills, mergeAgentTools, normalizeSkillIds, getSkillCatalogForApi, enrichAgentWithSkills } from "./skill-catalog.js";
 import { isRemoteRepo } from "../tools/git-ops.js";
+import { suggestModelForRole } from "./role-model-presets.js";
 
 const toolSet = new Set<string>(AVAILABLE_TOOL_NAMES);
 
@@ -216,6 +217,13 @@ function toOrchestratorConfig(
       produces: a.produces,
       prompt: enrichPrompt(a, designed.final_deliverable, upstreamAgentIds(a.id, edges)),
       tools,
+      model: suggestModelForRole({
+        label: a.label,
+        role: a.role,
+        tools,
+        produces: a.produces,
+        consumes: a.consumes,
+      }),
       routesTo: [],
       launchWhen: [`Work matching: ${a.consumes}`],
       doNotLaunchWhen: [],

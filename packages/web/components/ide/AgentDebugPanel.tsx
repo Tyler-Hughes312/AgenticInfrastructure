@@ -13,6 +13,7 @@ import {
 } from "../../lib/agent-debug";
 import type { RunEvent } from "../../lib/types/run";
 import { useChatSession } from "../chat/ChatSessionProvider";
+import { useOrchestrator } from "../orchestrator/OrchestratorProvider";
 
 type DebugTab = "overview" | "logs" | "tools" | "code" | "git";
 
@@ -41,6 +42,9 @@ export default function AgentDebugPanel({
 }: AgentDebugPanelProps) {
   const [tab, setTab] = useState<DebugTab>("overview");
   const { sessionId } = useChatSession();
+  const { config, availableModels, updateAgent } = useOrchestrator();
+  const agentConfig = config.agents.find((a) => a.id === agentId);
+  const currentModel = agentConfig?.model ?? agentMeta?.model ?? "";
 
   const agentEvents = useMemo(
     () => attributeEventsToAgents(events, knownAgentIds)[agentId] ?? [],
@@ -111,6 +115,29 @@ export default function AgentDebugPanel({
         {tab === "overview" && (
           <div className="space-y-4">
             <p className="text-charcoal-muted">{agentMeta?.role ?? "Agent node"}</p>
+            {agentId !== "supervisor" && (
+              <label className="block text-xs text-charcoal-muted">
+                LLM model
+                <select
+                  className="mt-1 w-full max-w-md text-sm bg-charcoal-bg border border-charcoal-border rounded-lg px-3 py-2 text-charcoal-text"
+                  value={currentModel}
+                  onChange={(e) => {
+                    void updateAgent(agentId, {
+                      model: e.target.value || undefined,
+                    });
+                  }}
+                >
+                  <option value="">Default (primary)</option>
+                  {availableModels
+                    .filter(Boolean)
+                    .map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <MetricCard label="Invocations" value={String(metrics.invocations)} />
               <MetricCard label="Tool calls" value={String(metrics.toolCalls)} />

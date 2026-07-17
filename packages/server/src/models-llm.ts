@@ -39,7 +39,7 @@ function hasProviderCredentials(provider: string, creds: RunCredentials): boolea
 function extraCandidatesForCredentials(creds: RunCredentials): string[] {
   const extras: string[] = [];
   if (hasCopilotCredentials(creds)) {
-    extras.push("copilot:gpt-4o", "copilot:gpt-4.1");
+    extras.push("copilot:gpt-4o", "copilot:gpt-4.1", "copilot:gpt-4o-mini");
   }
   if (creds.openaiApiKey) {
     extras.push("openai:gpt-4o", "openai:gpt-4.1");
@@ -102,6 +102,8 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
       model,
       temperature: 0,
       apiKey: token,
+      tags: [providerModel],
+      metadata: { ls_model_name: providerModel, model: providerModel },
       configuration: {
         baseURL: "https://api.githubcopilot.com",
         defaultHeaders: {
@@ -129,6 +131,8 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
       model,
       temperature: 0,
       apiKey,
+      tags: [providerModel],
+      metadata: { ls_model_name: providerModel, model: providerModel },
     });
   }
 

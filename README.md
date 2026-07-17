@@ -16,7 +16,7 @@ We added a **Runs** page (`/runs`) with optional Langfuse trace links and GitHub
 - GitHub PAT with `repo` scope (optional — only when pushing to GitHub)
 - `DEFAULT_REPO_URL` in server `.env` (or create a project via API)
 
-**Copilot setup (recommended):** see [docs/COPILOT-SETUP.md](docs/COPILOT-SETUP.md) — or run `npm run setup:copilot` then `npm run setup:copilot -- --login`.
+**Copilot setup (recommended):** see [docs/COPILOT-SETUP.md](docs/COPILOT-SETUP.md) — `npm run setup:minimal` then `npm run setup:copilot -- --login` (tokens auto-write to `.env`).
 
 **Enterprise Windows (locked-down PCs):** see [docs/ENTERPRISE-WINDOWS.md](docs/ENTERPRISE-WINDOWS.md) — local Postgres only, no Docker, proxy/CA, IT allowlist, `npm run doctor`.
 

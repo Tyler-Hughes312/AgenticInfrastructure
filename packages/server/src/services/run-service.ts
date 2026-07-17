@@ -302,25 +302,64 @@ function mapStreamEvent(ev: { event: string; name?: string }) {
 function toAgentLensEvent(
   runId: string,
   ev: Record<string, unknown>,
-  stepIndex: number
+  stepIndex: number,
+  modelByNode?: Record<string, string>
 ): Record<string, unknown> {
+  const metadata = {
+    ...((ev.metadata as Record<string, unknown> | undefined) ?? {}),
+  };
+  const node =
+    (typeof metadata.langgraph_node === "string" && metadata.langgraph_node) ||
+    (typeof ev.name === "string" ? ev.name : undefined);
+  const configuredModel = node && modelByNode?.[node] ? modelByNode[node] : undefined;
+
+  // Prefer explicit model from response / ls metadata, else agent config mapping.
+  const data = ev.data as
+    | {
+        output?: { response_metadata?: { model_name?: string; model?: string } };
+        chunk?: { response_metadata?: { model_name?: string; model?: string } };
+      }
+    | undefined;
+  const fromResponse =
+    data?.output?.response_metadata?.model_name ||
+    data?.output?.response_metadata?.model ||
+    data?.chunk?.response_metadata?.model_name ||
+    data?.chunk?.response_metadata?.model ||
+    (typeof metadata.ls_model_name === "string" ? metadata.ls_model_name : undefined) ||
+    (typeof metadata.model === "string" ? metadata.model : undefined);
+
+  if (fromResponse || configuredModel) {
+    metadata.ls_model_name = fromResponse || configuredModel;
+    metadata.model = fromResponse || configuredModel;
+  }
+
   const out: Record<string, unknown> = {
     run_id: runId,
     event: ev.event,
     name: ev.name,
     data: ev.data,
-    metadata: ev.metadata,
+    metadata,
     ts: Date.now(),
     step_index: stepIndex,
   };
   if (ev.event === "on_chain_end" || ev.event === "on_node_end") {
-    const data = ev.data as { output?: unknown } | undefined;
-    const snapshot = data?.output;
-    if (snapshot && typeof snapshot === "object") {
-      out.state_snapshot = snapshot;
+    const snap = (ev.data as { output?: unknown } | undefined)?.output;
+    if (snap && typeof snap === "object") {
+      out.state_snapshot = snap;
     }
   }
   return out;
+}
+
+function modelByNodeFromConfig(graphConfig?: OrchestratorGraphConfig | null): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (graphConfig?.supervisorModel?.trim()) {
+    map.supervisor = graphConfig.supervisorModel.trim();
+  }
+  for (const agent of graphConfig?.agents ?? []) {
+    if (agent.model?.trim()) map[agent.id] = agent.model.trim();
+  }
+  return map;
 }
 
 async function executeRun(
@@ -576,6 +615,7 @@ async function executeRun(
 
     const graph = getCompiledGraph(graphConfig, targetAgent, repoUrl);
     const pipelineNotes: string[] = [];
+    const modelByNode = modelByNodeFromConfig(graphConfig);
 
     for await (const ev of graph.streamEvents(input, {
       ...config,
@@ -583,7 +623,7 @@ async function executeRun(
       recursionLimit: GRAPH_RECURSION_LIMIT,
     })) {
       const raw = ev as Record<string, unknown>;
-      const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
+      const agentLensEv = toAgentLensEvent(runId, raw, stepIndex, modelByNode);
       await onAgentLensEvent?.(agentLensEv);
 
       // Collect terminal agent messages for post-run synthesis.
@@ -1150,10 +1190,11 @@ export async function* streamFollowUpToRun(
       let stepIndex = 0;
       const traceId = (handler as { last_trace_id?: string } | null)?.last_trace_id;
       const pipelineNotes2: string[] = [];
+      const modelByNode = modelByNodeFromConfig(orchestratorConfig);
 
       for await (const ev of graph.streamEvents(input, { ...config, version: "v2" })) {
         const raw = ev as Record<string, unknown>;
-        const agentLensEv = toAgentLensEvent(runId, raw, stepIndex);
+        const agentLensEv = toAgentLensEvent(runId, raw, stepIndex, modelByNode);
         push(agentLensEv);
 
         // Collect terminal agent messages for post-run synthesis.

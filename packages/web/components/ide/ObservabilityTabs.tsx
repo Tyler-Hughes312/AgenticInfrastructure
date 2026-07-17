@@ -76,6 +76,7 @@ export default function ObservabilityTabs({
         role: agent.role,
         tools: agent.tools,
         routesTo: agent.routesTo,
+        model: agent.model,
       };
     }
     return map;

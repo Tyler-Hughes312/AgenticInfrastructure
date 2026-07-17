@@ -80,6 +80,19 @@ export default function AgentCreateModal({
     setManualToolEdits(false);
   }
 
+  function applySuggestedModel() {
+    const blob = `${label} ${role}`.toLowerCase();
+    const writes =
+      tools.includes("write_file") ||
+      tools.includes("edit_file") ||
+      /\b(implement|build|code|develop|engineer)\b/.test(blob);
+    let pick = "copilot:gpt-4o";
+    if (/\b(classif|route|triage|lightweight)\b/.test(blob) && !writes) pick = "copilot:gpt-4o-mini";
+    else if (/\b(plan|research|architect|review|qa)\b/.test(blob) && !writes) pick = "copilot:gpt-4.1";
+    else if (writes) pick = "copilot:gpt-4o";
+    if (availableModels.includes(pick)) setModel(pick);
+  }
+
   function handleSubmit() {
     const agentId = (id.trim() || slugifyId(label)).toLowerCase();
     if (!/^[a-z][a-z0-9_]*$/.test(agentId)) {
@@ -170,7 +183,16 @@ export default function AgentCreateModal({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-charcoal-text mb-1">LLM model</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-charcoal-text">LLM model</label>
+              <button
+                type="button"
+                onClick={applySuggestedModel}
+                className="text-xs text-charcoal-accent hover:underline"
+              >
+                Suggest from role
+              </button>
+            </div>
             <select
               className={inputClass}
               value={model}
