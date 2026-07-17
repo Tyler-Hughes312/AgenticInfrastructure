@@ -2,6 +2,7 @@ import { loadCredentials } from "./credentials";
 
 const BASE_MODELS = [
   "",
+  "bedrock:openai.gpt-oss-120b-1:0",
   "copilot:gpt-4o",
   "copilot:gpt-4.1",
   "copilot:gpt-4o-mini",

@@ -1,0 +1,6 @@
+# Optional — copy to terraform.tfvars if you need a named profile for bootstrap alone.
+# Deploy script usually passes -var aws_profile=... from $AWS_PROFILE.
+
+aws_region = "us-gov-west-1"
+project    = "agentic"
+# aws_profile = "govcloud"

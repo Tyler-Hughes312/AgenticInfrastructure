@@ -55,8 +55,11 @@ function getKey(text: string, key: string): string | undefined {
 
 function patchMinimal(envPath: string) {
   let text = readFileSync(envPath, "utf-8");
-  text = setKey(text, "MODEL_PRIMARY", "copilot:gpt-4o");
-  text = setKey(text, "MODEL_FALLBACK", "copilot:gpt-4.1");
+  text = setKey(text, "MODEL_PRIMARY", "bedrock:openai.gpt-oss-120b-1:0");
+  text = setKey(text, "MODEL_FALLBACK", "bedrock:openai.gpt-oss-120b-1:0");
+  text = setKey(text, "BEDROCK_ENABLED", "true");
+  text = setKey(text, "BEDROCK_REGION", "us-gov-west-1");
+  text = setKey(text, "BEDROCK_MODEL_ID", "openai.gpt-oss-120b-1:0");
   text = setKey(text, "MEMORY_STORE", "inmemory");
   // Do not clear existing secrets — only ensure Copilot keys exist (may be empty until login).
   if (!/^GITHUB_COPILOT_OAUTH_TOKEN=/m.test(text)) {

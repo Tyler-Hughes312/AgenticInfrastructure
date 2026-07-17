@@ -8,6 +8,8 @@ import {
   type StoredCredentials,
 } from "../../lib/credentials";
 import { fetchCredentialsStatus } from "../../app/api-client";
+import { useAuth } from "../auth/AuthProvider";
+import { isAwsBackend } from "../../lib/auth/config";
 
 type CredentialsStatus = {
   github_token: boolean;
@@ -53,6 +55,7 @@ function StatusBadge({
 }
 
 export default function SettingsPanel() {
+  const auth = useAuth();
   const [form, setForm] = useState<StoredCredentials>(DEFAULT_CREDENTIALS);
   const [status, setStatus] = useState<CredentialsStatus | null>(null);
   const [saved, setSaved] = useState(false);
@@ -104,6 +107,24 @@ export default function SettingsPanel() {
             automatically.
           </p>
         </header>
+
+        {isAwsBackend() && (
+          <section className={cardClass}>
+            <h2 className="text-sm font-semibold mb-2 text-charcoal-text">AWS Cognito</h2>
+            <p className="text-sm text-charcoal-muted mb-3">
+              Signed in as{" "}
+              <span className="text-charcoal-text">{auth.email ?? "unknown"}</span>. HTTP and
+              WebSocket calls use your Cognito ID token against API Gateway.
+            </p>
+            <button
+              type="button"
+              onClick={() => void auth.signOut()}
+              className="px-3 py-2 text-sm rounded-lg border border-charcoal-border hover:border-charcoal-accent"
+            >
+              Sign out
+            </button>
+          </section>
+        )}
 
         {status && (
           <section className={cardClass}>

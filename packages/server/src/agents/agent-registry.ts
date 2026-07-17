@@ -9,7 +9,7 @@ import { publishHandoff, readPipelineContext } from "../tools/pipeline-handoff.j
 import { getModelForAgent } from "../models-llm.js";
 import type { AgentRoutingRule } from "./routing-policy.js";
 import { enrichAgentWithSkills } from "./skill-catalog.js";
-import { suggestModelForRole } from "./role-model-presets.js";
+import { BEDROCK_GPT_OSS_120B, suggestModelForRole } from "./role-model-presets.js";
 
 export const AVAILABLE_TOOL_NAMES = [
   "shell",
@@ -131,7 +131,7 @@ export function getDefaultOrchestratorConfig(): OrchestratorGraphConfig {
   return {
     agents: [],
     edges: [],
-    supervisorModel: undefined,
+    supervisorModel: BEDROCK_GPT_OSS_120B,
   };
 }
 
@@ -184,29 +184,34 @@ export function normalizeOrchestratorConfig(
   if (!input) return getDefaultOrchestratorConfig();
   const agents = input.agents ?? [];
   const edges = input.edges ?? [];
+  const supervisorModel =
+    input.supervisorModel?.trim().startsWith("bedrock:")
+      ? input.supervisorModel.trim()
+      : BEDROCK_GPT_OSS_120B;
+
   if (!agents.length) {
     return {
       agents: [],
       edges: [],
-      supervisorModel: input.supervisorModel,
+      supervisorModel,
       deliverableMode: input.deliverableMode,
     };
   }
   return {
     agents: syncRoutesToFromEdges(agents, edges).map((agent) => {
       const enriched = enrichAgentWithSkills(agent);
-      if (enriched.model?.trim()) return enriched;
-      return {
-        ...enriched,
-        model: suggestModelForRole({
-          label: enriched.label,
-          role: enriched.role,
-          tools: enriched.tools,
-        }),
-      };
+      const model =
+        enriched.model?.trim().startsWith("bedrock:")
+          ? enriched.model.trim()
+          : suggestModelForRole({
+              label: enriched.label,
+              role: enriched.role,
+              tools: enriched.tools,
+            });
+      return { ...enriched, model };
     }),
     edges,
-    supervisorModel: input.supervisorModel,
+    supervisorModel,
     deliverableMode: input.deliverableMode,
   };
 }

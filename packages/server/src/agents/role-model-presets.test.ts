@@ -1,51 +1,56 @@
 import { describe, it, expect } from "vitest";
-import { suggestModelForRole, shortModelLabel } from "./role-model-presets.js";
+import {
+  suggestModelForRole,
+  shortModelLabel,
+  BEDROCK_GPT_OSS_120B,
+} from "./role-model-presets.js";
 
 describe("suggestModelForRole", () => {
-  it("assigns code model to implementers", () => {
+  it("assigns Bedrock GPT-OSS-120B to implementers", () => {
     expect(
       suggestModelForRole({
         label: "Builder",
         role: "Implements features in the codebase",
         tools: ["write_file", "edit_file"],
       })
-    ).toBe("copilot:gpt-4o");
+    ).toBe(BEDROCK_GPT_OSS_120B);
   });
 
-  it("assigns plan model to planners", () => {
+  it("assigns Bedrock GPT-OSS-120B to planners", () => {
     expect(
       suggestModelForRole({
         label: "Planner",
         role: "Plans architecture and product scope",
         tools: ["read_file", "manage_memory"],
       })
-    ).toBe("copilot:gpt-4.1");
+    ).toBe(BEDROCK_GPT_OSS_120B);
   });
 
-  it("assigns review model to reviewers", () => {
+  it("assigns Bedrock GPT-OSS-120B to reviewers", () => {
     expect(
       suggestModelForRole({
         label: "Reviewer",
         role: "Reviews PRs and critiques quality",
         tools: ["read_file"],
       })
-    ).toBe("copilot:gpt-4.1");
+    ).toBe(BEDROCK_GPT_OSS_120B);
   });
 
-  it("assigns light model to classifiers", () => {
+  it("assigns Bedrock GPT-OSS-120B to classifiers", () => {
     expect(
       suggestModelForRole({
         label: "Router",
         role: "Classifies and routes lightweight requests",
         tools: ["read_file"],
       })
-    ).toBe("copilot:gpt-4o-mini");
+    ).toBe(BEDROCK_GPT_OSS_120B);
   });
 });
 
 describe("shortModelLabel", () => {
-  it("strips provider prefix", () => {
+  it("strips provider prefix including bedrock model ids with colons", () => {
     expect(shortModelLabel("copilot:gpt-4o")).toBe("gpt-4o");
+    expect(shortModelLabel(BEDROCK_GPT_OSS_120B)).toBe("openai.gpt-oss-120b-1:0");
     expect(shortModelLabel(undefined)).toBe("default");
   });
 });

@@ -1,8 +1,13 @@
-import { OpenAIEmbeddings, ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatBedrockConverse } from "@langchain/aws";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { OpenAIEmbeddings } from "@langchain/openai";
 import { env } from "./config.js";
 import { resolveCredentials } from "./credentials/store.js";
 import type { RunCredentials } from "./credentials/types.js";
+import { BEDROCK_GPT_OSS_120B } from "./agents/role-model-presets.js";
+
+export { BEDROCK_GPT_OSS_120B };
 
 const BLOCKED = ["anthropic", "claude"];
 
@@ -30,7 +35,19 @@ function hasCopilotCredentials(creds: RunCredentials): boolean {
   return Boolean(creds.githubCopilotToken || creds.githubToken);
 }
 
+/** Bedrock uses the AWS default credential chain (env keys, profile, or IAM role). */
+function hasBedrockCredentials(): boolean {
+  return Boolean(
+    process.env.AWS_ACCESS_KEY_ID ||
+      process.env.AWS_PROFILE ||
+      process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+      process.env.AWS_WEB_IDENTITY_TOKEN_FILE ||
+      env.BEDROCK_ENABLED
+  );
+}
+
 function hasProviderCredentials(provider: string, creds: RunCredentials): boolean {
+  if (provider === "bedrock") return hasBedrockCredentials();
   if (provider === "copilot") return hasCopilotCredentials(creds);
   if (provider === "openai") return Boolean(creds.openaiApiKey);
   return false;
@@ -38,6 +55,9 @@ function hasProviderCredentials(provider: string, creds: RunCredentials): boolea
 
 function extraCandidatesForCredentials(creds: RunCredentials): string[] {
   const extras: string[] = [];
+  if (hasBedrockCredentials()) {
+    extras.push(BEDROCK_GPT_OSS_120B);
+  }
   if (hasCopilotCredentials(creds)) {
     extras.push("copilot:gpt-4o", "copilot:gpt-4.1", "copilot:gpt-4o-mini");
   }
@@ -77,7 +97,8 @@ export function selectAuthenticatedModels(creds: RunCredentials): {
 
   if (!usable.length) {
     throw new Error(
-      "No LLM credentials available. Run `npm run copilot-login -w @agentic/server` or set OPENAI_API_KEY."
+      "No LLM credentials available. Configure AWS credentials for bedrock:openai.gpt-oss-120b-1:0 " +
+        "(AWS_PROFILE / AWS_ACCESS_KEY_ID), or run `npm run copilot-login -w @agentic/server`, or set OPENAI_API_KEY."
     );
   }
 
@@ -86,9 +107,20 @@ export function selectAuthenticatedModels(creds: RunCredentials): {
   return { primary, fallback };
 }
 
-function buildModel(providerModel: string, credentials?: RunCredentials): ChatOpenAI {
+function buildModel(providerModel: string, credentials?: RunCredentials): BaseChatModel {
   const creds = resolveCredentials(credentials);
   const [provider, model] = assertModelAllowed(providerModel);
+
+  if (provider === "bedrock") {
+    return new ChatBedrockConverse({
+      model,
+      region: env.BEDROCK_REGION,
+      temperature: 0,
+      maxTokens: 8192,
+      tags: [providerModel],
+      metadata: { ls_model_name: providerModel, model: providerModel },
+    });
+  }
 
   if (provider === "copilot") {
     const token = creds.githubCopilotToken ?? creds.githubToken;
@@ -97,7 +129,6 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
         "GitHub Copilot token required. Run `npm run copilot-login -w @agentic/server`, or set GITHUB_COPILOT_TOKEN / GITHUB_TOKEN."
       );
     }
-    // Copilot serves OpenAI-compatible routes at /chat/completions (no /v1 prefix).
     return new ChatOpenAI({
       model,
       temperature: 0,
@@ -121,7 +152,7 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
     const apiKey = creds.openaiApiKey;
     if (!apiKey) {
       throw new Error(
-        "OpenAI API key required for this model. Set OPENAI_API_KEY or switch MODEL_PRIMARY to copilot:gpt-4o."
+        "OpenAI API key required for this model. Set OPENAI_API_KEY or switch MODEL_PRIMARY to bedrock:openai.gpt-oss-120b-1:0."
       );
     }
     if (apiKey.includes("unused-wrapper") || apiKey === "unused-wrapper") {
@@ -136,21 +167,19 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
     });
   }
 
-  throw new Error(`Unsupported model provider: ${provider}. Use copilot: or openai:`);
+  throw new Error(
+    `Unsupported model provider: ${provider}. Use bedrock:, copilot:, or openai:`
+  );
 }
 
-/**
- * Always returns a real ChatOpenAI with a real API key.
- * Never return ChatOpenAI subclasses with placeholder keys — LangGraph bindTools
- * will call the OpenAI client on the wrapper itself and leak those placeholders.
- */
-function resolveModelNow(_useFallback = true): ChatOpenAI {
+function resolveModelNow(_useFallback = true): BaseChatModel {
   const creds = resolveCredentials();
   const { primary: primaryModel } = selectAuthenticatedModels(creds);
 
   if (providerOf(primaryModel) !== providerOf(creds.modelPrimary ?? env.MODEL_PRIMARY)) {
     console.warn(
-      `Using ${primaryModel} because configured primary lacks credentials (have openai=${Boolean(creds.openaiApiKey)} copilot=${hasCopilotCredentials(creds)})`
+      `Using ${primaryModel} because configured primary lacks credentials ` +
+        `(have bedrock=${hasBedrockCredentials()} openai=${Boolean(creds.openaiApiKey)} copilot=${hasCopilotCredentials(creds)})`
     );
   }
 
@@ -162,6 +191,15 @@ export function getModel(useFallback = true): BaseChatModel {
 }
 
 export function getModelForAgent(modelOverride?: string, useFallback = true): BaseChatModel {
+  // Supervisor + workers: prefer Bedrock GPT-OSS-120B whenever Bedrock is enabled.
+  if (env.BEDROCK_ENABLED && hasBedrockCredentials()) {
+    const requested = modelOverride?.trim();
+    if (requested?.startsWith("bedrock:")) {
+      return buildModel(requested);
+    }
+    return buildModel(BEDROCK_GPT_OSS_120B);
+  }
+
   if (!modelOverride?.trim()) return getModel(useFallback);
   const creds = resolveCredentials();
   const override = modelOverride.trim();

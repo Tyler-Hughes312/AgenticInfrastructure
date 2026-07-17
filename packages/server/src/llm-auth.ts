@@ -22,7 +22,8 @@ export function formatLlmError(err: unknown): string {
   if (isLlmAuthError(err)) {
     return (
       "LLM authentication failed. Run `npm run copilot-login -w @agentic/server`, " +
-      "ensure MODEL_PRIMARY=copilot:gpt-4o, or set OPENAI_API_KEY for openai: models.\n" +
+      "ensure MODEL_PRIMARY=bedrock:openai.gpt-oss-120b-1:0 with AWS credentials, " +
+      "or copilot:gpt-4o via copilot-login, or set OPENAI_API_KEY for openai: models.\n" +
       COPILOT_AUTH_HELP
     );
   }

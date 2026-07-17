@@ -113,7 +113,12 @@ export function getRoutingPolicyForApi() {
       "publish_handoff",
       "read_pipeline_context",
     ],
-    model_formats: ["copilot:gpt-4o", "openai:gpt-4.1", "openai:gpt-4o"],
+    model_formats: [
+      "bedrock:openai.gpt-oss-120b-1:0",
+      "copilot:gpt-4o",
+      "openai:gpt-4.1",
+      "openai:gpt-4o",
+    ],
     blank_canvas: true,
     auto_deploy: "llm_graph_design",
   };

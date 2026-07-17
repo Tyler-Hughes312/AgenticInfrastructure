@@ -69,14 +69,14 @@ describe("platform-agnostic setup (no secrets)", () => {
     }
   });
 
-  it("role model presets stay on copilot provider", () => {
+  it("role model presets use Bedrock GPT-OSS-120B", () => {
     const models = [
       suggestModelForRole({ label: "Coder", role: "implements code", tools: ["write_file"] }),
       suggestModelForRole({ label: "Planner", role: "plans architecture", tools: ["read_file"] }),
       suggestModelForRole({ label: "Router", role: "classifies requests", tools: ["read_file"] }),
     ];
     for (const m of models) {
-      expect(m.startsWith("copilot:")).toBe(true);
+      expect(m).toBe("bedrock:openai.gpt-oss-120b-1:0");
     }
   });
 

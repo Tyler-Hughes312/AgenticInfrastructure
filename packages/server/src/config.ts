@@ -34,8 +34,15 @@ function loadEnvFiles() {
 loadEnvFiles();
 
 const envSchema = z.object({
-  MODEL_PRIMARY: z.string().default("copilot:gpt-4o"),
-  MODEL_FALLBACK: z.string().default("copilot:gpt-4.1"),
+  MODEL_PRIMARY: z.string().default("bedrock:openai.gpt-oss-120b-1:0"),
+  MODEL_FALLBACK: z.string().default("bedrock:openai.gpt-oss-120b-1:0"),
+  /** When true (or AWS creds present), bedrock: models are eligible. */
+  BEDROCK_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "0" && v.toLowerCase() !== "false"),
+  BEDROCK_REGION: z.string().default("us-gov-west-1"),
+  BEDROCK_MODEL_ID: z.string().default("openai.gpt-oss-120b-1:0"),
   GITHUB_COPILOT_TOKEN: z.string().default(""),
   /** Long-lived OAuth token from copilot-login — used to refresh session tokens. */
   GITHUB_COPILOT_OAUTH_TOKEN: z.string().default(""),

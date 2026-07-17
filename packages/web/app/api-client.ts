@@ -6,22 +6,59 @@ import {
 } from "../lib/credentials";
 import type { OrchestratorGraphConfig, SkillDefinition } from "../lib/types/orchestrator";
 import type { RunEvent } from "../lib/types/run";
+import { apiBaseUrl, isAwsBackend, wsBaseUrl } from "../lib/auth/config";
+import { getIdTokenSync, getValidIdToken } from "../lib/auth/cognito";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
+const API_BASE = apiBaseUrl();
+const WS_BASE = wsBaseUrl();
 
 function getCredentials(): StoredCredentials {
   return loadCredentials();
 }
 
+/** Authenticated fetch — attaches Cognito ID token when running against API Gateway. */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers ?? undefined);
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  if (isAwsBackend()) {
+    const token = await getValidIdToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const url = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  return fetch(url, { ...init, headers });
+}
+
+/**
+ * WebSocket URL.
+ * Local Fastify: ws://host/ws/run
+ * API Gateway: wss://…/dev?token=<id_token>
+ */
+export function buildWsUrl(path: string): string {
+  if (isAwsBackend()) {
+    const token = getIdTokenSync();
+    const base = WS_BASE;
+    if (!token) return base;
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}token=${encodeURIComponent(token)}`;
+  }
+  return `${WS_BASE}${path}`;
+}
+
 export async function runAgent(question: string) {
   const credentials = getCredentials();
-  const res = await fetch(`${API_BASE}/api/run-agent`, {
+  const headers = isAwsBackend()
+    ? { "Content-Type": "application/json" }
+    : credentialsHeaders(credentials);
+  const res = await apiFetch("/api/run-agent", {
     method: "POST",
-    headers: credentialsHeaders(credentials),
+    headers,
     body: JSON.stringify({
       question,
-      credentials: credentialsToPayload(credentials),
+      ...(isAwsBackend() ? {} : { credentials: credentialsToPayload(credentials) }),
     }),
   });
   return res.json();
@@ -29,13 +66,17 @@ export async function runAgent(question: string) {
 
 export function openRunWebsocket(question: string) {
   const credentials = getCredentials();
-  const ws = new WebSocket(`${WS_BASE}/ws/run`);
+  const ws = new WebSocket(buildWsUrl("/ws/run"));
   ws.onopen = () =>
     ws.send(
-      JSON.stringify({
-        question,
-        credentials: credentialsToPayload(credentials),
-      })
+      JSON.stringify(
+        isAwsBackend()
+          ? { action: "chat", prompt: question, type: "start", question }
+          : {
+              question,
+              credentials: credentialsToPayload(credentials),
+            }
+      )
     );
   return ws;
 }
@@ -68,7 +109,7 @@ export class RunSessionWebsocket {
   }
 
   private connect() {
-    this.ws = new WebSocket(`${WS_BASE}/ws/run`);
+    this.ws = new WebSocket(buildWsUrl("/ws/run"));
     this.ws.onopen = () => {
       this.ready = true;
       this.callbacks.onOpen?.();
@@ -122,15 +163,28 @@ export class RunSessionWebsocket {
       return;
     }
     this.ws.send(
-      JSON.stringify({
-        type: "start",
-        question,
-        credentials: credentialsToPayload(getCredentials()),
-        target_agent: options?.targetAgent,
-        orchestrator_config: options?.orchestratorConfig,
-        chat_session_id: options?.chatSessionId ?? this.chatSessionId ?? undefined,
-        project_id: options?.projectId ?? undefined,
-      })
+      JSON.stringify(
+        isAwsBackend()
+          ? {
+              action: "chat",
+              type: "start",
+              prompt: question,
+              question,
+              target_agent: options?.targetAgent,
+              orchestrator_config: options?.orchestratorConfig,
+              chat_session_id: options?.chatSessionId ?? this.chatSessionId ?? undefined,
+              project_id: options?.projectId ?? undefined,
+            }
+          : {
+              type: "start",
+              question,
+              credentials: credentialsToPayload(getCredentials()),
+              target_agent: options?.targetAgent,
+              orchestrator_config: options?.orchestratorConfig,
+              chat_session_id: options?.chatSessionId ?? this.chatSessionId ?? undefined,
+              project_id: options?.projectId ?? undefined,
+            }
+      )
     );
   }
 
@@ -140,15 +194,28 @@ export class RunSessionWebsocket {
       return;
     }
     this.ws.send(
-      JSON.stringify({
-        type: "follow_up",
-        question,
-        credentials: credentialsToPayload(getCredentials()),
-        target_agent: options?.targetAgent,
-        orchestrator_config: options?.orchestratorConfig,
-        chat_session_id: options?.chatSessionId ?? this.chatSessionId ?? undefined,
-        project_id: options?.projectId ?? undefined,
-      })
+      JSON.stringify(
+        isAwsBackend()
+          ? {
+              action: "chat",
+              type: "follow_up",
+              prompt: question,
+              question,
+              target_agent: options?.targetAgent,
+              orchestrator_config: options?.orchestratorConfig,
+              chat_session_id: options?.chatSessionId ?? this.chatSessionId ?? undefined,
+              project_id: options?.projectId ?? undefined,
+            }
+          : {
+              type: "follow_up",
+              question,
+              credentials: credentialsToPayload(getCredentials()),
+              target_agent: options?.targetAgent,
+              orchestrator_config: options?.orchestratorConfig,
+              chat_session_id: options?.chatSessionId ?? this.chatSessionId ?? undefined,
+              project_id: options?.projectId ?? undefined,
+            }
+      )
     );
   }
 
@@ -160,16 +227,16 @@ export class RunSessionWebsocket {
 }
 
 export async function fetchRuns() {
-  const res = await fetch(`${API_BASE}/api/runs`);
+  const res = await apiFetch("/api/runs");
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function fetchCredentialsStatus(credentials?: StoredCredentials) {
   const creds = credentials ?? getCredentials();
-  const res = await fetch(`${API_BASE}/api/settings/status`, {
+  const res = await apiFetch("/api/settings/status", {
     method: "POST",
-    headers: credentialsHeaders(creds),
+    headers: isAwsBackend() ? { "Content-Type": "application/json" } : credentialsHeaders(creds),
     body: JSON.stringify({ credentials: credentialsToPayload(creds) }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -177,7 +244,7 @@ export async function fetchCredentialsStatus(credentials?: StoredCredentials) {
 }
 
 export async function fetchRoutingPolicy() {
-  const res = await fetch(`${API_BASE}/api/settings/routing`);
+  const res = await apiFetch("/api/settings/routing");
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -187,17 +254,17 @@ export function apiUrl(path: string) {
 }
 
 export function wsUrl(path: string) {
-  return `${WS_BASE}${path}`;
+  return buildWsUrl(path);
 }
 
 export async function fetchRunTrace(runId: string) {
-  const res = await fetch(apiUrl(`/api/trace/${runId}`));
+  const res = await apiFetch(`/api/trace/${runId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export function subscribeRunStream(runId: string, onEvent: (event: unknown) => void) {
-  const ws = new WebSocket(wsUrl(`/runs/${runId}/stream`));
+  const ws = new WebSocket(buildWsUrl(`/runs/${runId}/stream`));
   ws.onmessage = (msg) => onEvent(JSON.parse(msg.data));
   return ws;
 }
@@ -213,7 +280,7 @@ export type ChatSessionSummary = {
 };
 
 export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
-  const res = await fetch(apiUrl("/api/chat-sessions"));
+  const res = await apiFetch("/api/chat-sessions");
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -222,7 +289,7 @@ export async function updateChatSessionTitle(
   sessionId: string,
   title: string
 ): Promise<void> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}`), {
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
@@ -234,7 +301,7 @@ export async function duplicateChatSession(
   sessionId: string,
   title?: string
 ): Promise<{ id: string; title: string | null }> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/duplicate`), {
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/duplicate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(title ? { title } : {}),
@@ -244,14 +311,14 @@ export async function duplicateChatSession(
 }
 
 export async function deleteChatSession(sessionId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}`), {
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await res.text());
 }
 
 export async function deleteRun(runId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/runs/${runId}`), { method: "DELETE" });
+  const res = await apiFetch(`/api/runs/${runId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
 }
 
@@ -275,7 +342,7 @@ export type ChatSessionResponse = {
 export async function createChatSession(
   options?: { title?: string; project_id?: string }
 ): Promise<ChatSessionResponse> {
-  const res = await fetch(apiUrl("/api/chat-sessions"), {
+  const res = await apiFetch("/api/chat-sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(options ?? {}),
@@ -285,7 +352,7 @@ export async function createChatSession(
 }
 
 export async function fetchChatSession(sessionId: string): Promise<ChatSessionResponse> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}`));
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -294,7 +361,7 @@ export async function saveChatSessionGraph(
   sessionId: string,
   config: OrchestratorGraphConfig
 ): Promise<OrchestratorGraphConfig> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/graph`), {
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/graph`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
@@ -315,7 +382,7 @@ export type SavedGraphTemplateSummary = {
 };
 
 export async function fetchSavedGraphTemplates(): Promise<SavedGraphTemplateSummary[]> {
-  const res = await fetch(apiUrl("/api/graph-templates"));
+  const res = await apiFetch("/api/graph-templates");
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -327,7 +394,7 @@ export async function saveGraphTemplate(params: {
   sessionId?: string;
   config?: OrchestratorGraphConfig;
 }): Promise<{ id: string; name: string; agent_count: number }> {
-  const res = await fetch(apiUrl("/api/graph-templates"), {
+  const res = await apiFetch("/api/graph-templates", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -351,7 +418,7 @@ export async function saveGraphTemplate(params: {
 }
 
 export async function deleteSavedGraphTemplate(templateId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/graph-templates/${templateId}`), { method: "DELETE" });
+  const res = await apiFetch(`/api/graph-templates/${templateId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
 }
 
@@ -360,7 +427,7 @@ export async function openSavedGraphTemplate(
   projectId: string,
   title?: string
 ): Promise<{ session_id: string; project_id: string; config: OrchestratorGraphConfig }> {
-  const res = await fetch(apiUrl(`/api/graph-templates/${templateId}/open`), {
+  const res = await apiFetch(`/api/graph-templates/${templateId}/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project_id: projectId, ...(title ? { title } : {}) }),
@@ -379,7 +446,7 @@ export type ProjectSummary = {
 };
 
 export async function fetchProjects(): Promise<ProjectSummary[]> {
-  const res = await fetch(apiUrl("/api/projects"));
+  const res = await apiFetch("/api/projects");
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -389,7 +456,7 @@ export async function createProject(params: {
   repo_url: string;
   default_branch?: string;
 }): Promise<ProjectSummary> {
-  const res = await fetch(apiUrl("/api/projects"), {
+  const res = await apiFetch("/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -411,7 +478,7 @@ export async function openProject(
   projectId: string,
   title?: string
 ): Promise<{ project_id: string; session_id: string; title: string | null; repo_url: string }> {
-  const res = await fetch(apiUrl(`/api/projects/${projectId}/open`), {
+  const res = await apiFetch(`/api/projects/${projectId}/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(title ? { title } : {}),
@@ -421,7 +488,7 @@ export async function openProject(
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/api/projects/${projectId}`), { method: "DELETE" });
+  const res = await apiFetch(`/api/projects/${projectId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(await res.text());
 }
 
@@ -429,7 +496,7 @@ export async function applySavedGraphTemplate(
   templateId: string,
   sessionId: string
 ): Promise<{ config: OrchestratorGraphConfig; template_name: string }> {
-  const res = await fetch(apiUrl(`/api/graph-templates/${templateId}/apply`), {
+  const res = await apiFetch(`/api/graph-templates/${templateId}/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
@@ -457,7 +524,7 @@ export type WorkspaceFileChangeDetail = WorkspaceFileChangeSummary & {
 };
 
 export async function fetchWorkspaceTree(sessionId: string): Promise<WorkspaceTreeNode[]> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/workspace/tree`));
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/workspace/tree`);
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
   return data.tree as WorkspaceTreeNode[];
@@ -474,8 +541,8 @@ export async function fetchWorkspaceFile(
   size?: number;
   git_diff: string | null;
 }> {
-  const res = await fetch(
-    apiUrl(`/api/chat-sessions/${sessionId}/workspace/file?path=${encodeURIComponent(path)}`)
+  const res = await apiFetch(
+    `/api/chat-sessions/${sessionId}/workspace/file?path=${encodeURIComponent(path)}`
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -486,7 +553,7 @@ export async function createWorkspaceFile(
   path: string,
   content: string
 ): Promise<void> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/workspace/file`), {
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/workspace/file`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, content }),
@@ -499,7 +566,7 @@ export async function saveWorkspaceFile(
   path: string,
   content: string
 ): Promise<void> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/workspace/file`), {
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/workspace/file`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, content }),
@@ -529,7 +596,7 @@ export async function fetchWorkspaceOutputs(sessionId: string): Promise<{
   deliverable_files: string[];
   recent: WorkspaceOutputSummary[];
 }> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/workspace/outputs`));
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/workspace/outputs`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
@@ -537,7 +604,7 @@ export async function fetchWorkspaceOutputs(sessionId: string): Promise<{
 export async function fetchWorkspaceChanges(
   sessionId: string
 ): Promise<WorkspaceFileChangeSummary[]> {
-  const res = await fetch(apiUrl(`/api/chat-sessions/${sessionId}/workspace/changes`));
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/workspace/changes`);
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
   return data.changes as WorkspaceFileChangeSummary[];
@@ -547,9 +614,7 @@ export async function fetchWorkspaceChangeDetail(
   sessionId: string,
   changeId: string
 ): Promise<WorkspaceFileChangeDetail> {
-  const res = await fetch(
-    apiUrl(`/api/chat-sessions/${sessionId}/workspace/changes/${changeId}`)
-  );
+  const res = await apiFetch(`/api/chat-sessions/${sessionId}/workspace/changes/${changeId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

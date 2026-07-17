@@ -1,6 +1,7 @@
 import React, { Suspense } from "react";
 import "./globals.css";
 import { ChatSessionProvider } from "../components/chat/ChatSessionProvider";
+import { AuthProvider } from "../components/auth/AuthProvider";
 
 export default function RootLayout({
   children,
@@ -17,7 +18,9 @@ export default function RootLayout({
             </div>
           }
         >
-          <ChatSessionProvider>{children}</ChatSessionProvider>
+          <AuthProvider>
+            <ChatSessionProvider>{children}</ChatSessionProvider>
+          </AuthProvider>
         </Suspense>
       </body>
     </html>

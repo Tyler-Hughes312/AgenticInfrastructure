@@ -14,7 +14,12 @@
     "setup:db": "npm run setup:db -w @agentic/server",
     "setup:copilot": "npm run setup:copilot -w @agentic/server --",
     "setup:minimal": "npm run setup:minimal -w @agentic/server --",
-    "test:e2e": "npm run test:e2e -w @agentic/server --"
+    "test:e2e": "npm run test:e2e -w @agentic/server --",
+    "infra:deploy": "bash infra/scripts/deploy.sh",
+    "infra:deploy:yes": "bash infra/scripts/deploy.sh --yes",
+    "infra:plan": "bash infra/scripts/deploy.sh --plan",
+    "infra:destroy": "bash infra/scripts/deploy.sh --destroy",
+    "infra:sync-web-env": "bash infra/scripts/sync-web-env.sh"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

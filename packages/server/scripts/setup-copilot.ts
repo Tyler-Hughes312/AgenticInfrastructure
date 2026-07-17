@@ -37,8 +37,11 @@ function patchModelDefaults(envPath: string) {
       text = `${text.trimEnd()}\n${key}=${value}\n`;
     }
   };
-  ensure("MODEL_PRIMARY", "copilot:gpt-4o");
-  ensure("MODEL_FALLBACK", "copilot:gpt-4.1");
+  ensure("MODEL_PRIMARY", "bedrock:openai.gpt-oss-120b-1:0");
+  ensure("MODEL_FALLBACK", "bedrock:openai.gpt-oss-120b-1:0");
+  ensure("BEDROCK_ENABLED", "true");
+  ensure("BEDROCK_REGION", "us-gov-west-1");
+  ensure("BEDROCK_MODEL_ID", "openai.gpt-oss-120b-1:0");
   if (!/^GITHUB_COPILOT_OAUTH_TOKEN=/m.test(text)) {
     text = `${text.trimEnd()}\nGITHUB_COPILOT_OAUTH_TOKEN=\n`;
   }
