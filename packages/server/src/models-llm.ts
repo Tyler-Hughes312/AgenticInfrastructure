@@ -77,7 +77,7 @@ export function selectAuthenticatedModels(creds: RunCredentials): {
 
   if (!usable.length) {
     throw new Error(
-      "No LLM credentials available. Set OPENAI_API_KEY in .env (recommended) or GITHUB_COPILOT_TOKEN in Settings."
+      "No LLM credentials available. Run `npm run copilot-login -w @agentic/server` or set OPENAI_API_KEY."
     );
   }
 
@@ -94,7 +94,7 @@ function buildModel(providerModel: string, credentials?: RunCredentials): ChatOp
     const token = creds.githubCopilotToken ?? creds.githubToken;
     if (!token) {
       throw new Error(
-        "GitHub Copilot token required. Set GITHUB_COPILOT_TOKEN or GITHUB_TOKEN in .env, or run copilot-login."
+        "GitHub Copilot token required. Run `npm run copilot-login -w @agentic/server`, or set GITHUB_COPILOT_TOKEN / GITHUB_TOKEN."
       );
     }
     // Copilot serves OpenAI-compatible routes at /chat/completions (no /v1 prefix).

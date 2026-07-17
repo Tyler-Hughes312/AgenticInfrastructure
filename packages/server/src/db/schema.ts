@@ -82,7 +82,9 @@ export const savedGraphTemplates = pgTable("saved_graph_templates", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   graphConfig: text("graph_config").notNull(),
-  sourceSessionId: uuid("source_session_id").references(() => chatSessions.id),
+  sourceSessionId: uuid("source_session_id").references(() => chatSessions.id, {
+    onDelete: "set null",
+  }),
   agentCount: text("agent_count").notNull().default("0"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

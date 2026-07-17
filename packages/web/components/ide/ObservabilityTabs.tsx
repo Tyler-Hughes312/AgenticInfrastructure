@@ -9,7 +9,6 @@ import StateInspector from "../StateInspector";
 import DiffViewer from "../DiffViewer";
 import CostLatencyPanel from "../CostLatencyPanel";
 import ReplayControls from "../ReplayControls";
-import TraceDetails from "../TraceDetails";
 import DriftPanel from "../DriftPanel";
 import StatusLog from "../StatusLog";
 import SaveInfrastructureModal from "./SaveInfrastructureModal";
@@ -20,7 +19,7 @@ import type { AgentMeta } from "../../lib/agent-debug";
 import type { DiffItem } from "../diff";
 import type { RunEvent } from "../../lib/types/run";
 
-type TabId = "graph" | "debug" | "events" | "state" | "metrics" | "replay" | "trace";
+type TabId = "graph" | "debug" | "events" | "state" | "metrics";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "graph", label: "Graph" },
@@ -28,15 +27,12 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "events", label: "Events" },
   { id: "state", label: "State" },
   { id: "metrics", label: "Metrics" },
-  { id: "replay", label: "Replay" },
-  { id: "trace", label: "Trace" },
 ];
 
 type ObservabilityTabsProps = {
   filteredEvents: RunEvent[];
   shownState: Record<string, unknown>;
   computedDiffs: DiffItem[];
-  actualRunId: string | null;
   snapshotsCount: number;
   replayIndex: number;
   isLive: boolean;
@@ -50,7 +46,6 @@ export default function ObservabilityTabs({
   filteredEvents,
   shownState,
   computedDiffs,
-  actualRunId,
   snapshotsCount,
   replayIndex,
   isLive,
@@ -166,13 +161,18 @@ export default function ObservabilityTabs({
         )}
 
         {activeTab === "debug" && (
-          <div className="h-full min-h-0 overflow-auto p-4">
-            <RunDebugConsole
-              events={filteredEvents}
-              shownState={shownState}
-              actualRunId={actualRunId}
-              agentMetaMap={agentMetaMap}
-            />
+          <div className="h-full min-h-0 overflow-auto p-4 space-y-4">
+            <div className={`${panelClass} max-w-xl`}>
+              <h3 className="text-sm font-semibold mb-3 text-charcoal-text">Replay</h3>
+              <ReplayControls
+                max={Math.max(0, snapshotsCount - 1)}
+                value={replayIndex}
+                onChange={onReplayChange}
+                isLive={isLive}
+                onToggleLive={onToggleLive}
+              />
+            </div>
+            <RunDebugConsole events={filteredEvents} agentMetaMap={agentMetaMap} />
           </div>
         )}
 
@@ -207,34 +207,6 @@ export default function ObservabilityTabs({
             <div className={panelClass}>
               <h3 className="text-sm font-semibold mb-3 text-charcoal-text">Quality Metrics</h3>
               <DriftPanel state={shownState} />
-            </div>
-          </div>
-        )}
-
-        {activeTab === "replay" && (
-          <div className="overflow-auto p-4">
-            <div className={`${panelClass} max-w-xl`}>
-              <h3 className="text-sm font-semibold mb-3 text-charcoal-text">Replay Controls</h3>
-              <ReplayControls
-                max={Math.max(0, snapshotsCount - 1)}
-                value={replayIndex}
-                onChange={onReplayChange}
-                isLive={isLive}
-                onToggleLive={onToggleLive}
-              />
-            </div>
-          </div>
-        )}
-
-        {activeTab === "trace" && (
-          <div className="overflow-auto p-4">
-            <div className={`${panelClass} max-w-2xl`}>
-              <h3 className="text-sm font-semibold mb-3 text-charcoal-text">LangSmith Trace</h3>
-              {actualRunId ? (
-                <TraceDetails runId={actualRunId} />
-              ) : (
-                <p className="text-sm text-charcoal-muted">Start a task to view trace details.</p>
-              )}
             </div>
           </div>
         )}

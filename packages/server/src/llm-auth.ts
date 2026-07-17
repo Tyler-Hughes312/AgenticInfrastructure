@@ -1,4 +1,10 @@
 import { resolveCredentials } from "./credentials/store.js";
+import {
+  getCachedCopilotToken,
+  invalidateCopilotSession,
+  refreshCopilotSession,
+  COPILOT_AUTH_HELP,
+} from "./auth/copilot-token.js";
 
 export function isLlmAuthError(err: unknown): boolean {
   if (!err || typeof err !== "object") {
@@ -15,8 +21,9 @@ export function isLlmAuthError(err: unknown): boolean {
 export function formatLlmError(err: unknown): string {
   if (isLlmAuthError(err)) {
     return (
-      "LLM authentication failed. Set OPENAI_API_KEY in the repo-root .env or in Settings, " +
-      "and ensure MODEL_PRIMARY=openai:gpt-4o (or another openai: model)."
+      "LLM authentication failed. Run `npm run copilot-login -w @agentic/server`, " +
+      "ensure MODEL_PRIMARY=copilot:gpt-4o, or set OPENAI_API_KEY for openai: models.\n" +
+      COPILOT_AUTH_HELP
     );
   }
   return err instanceof Error ? err.message : String(err);
@@ -24,9 +31,15 @@ export function formatLlmError(err: unknown): string {
 
 export function assertLlmReady(): void {
   const creds = resolveCredentials();
+  if (creds.githubCopilotToken?.trim() || getCachedCopilotToken()) return;
   if (creds.openaiApiKey?.trim()) return;
-  if (creds.githubCopilotToken?.trim()) return;
   throw new Error(
-    "No LLM credentials. Set OPENAI_API_KEY in .env (recommended) or GITHUB_COPILOT_TOKEN in Settings."
+    "No LLM credentials. Run `npm run copilot-login -w @agentic/server` (recommended) or set OPENAI_API_KEY."
   );
+}
+
+/** Invalidate session and re-exchange once. Returns true if a fresh token is available. */
+export async function recoverCopilotAuth(): Promise<boolean> {
+  invalidateCopilotSession();
+  return refreshCopilotSession();
 }

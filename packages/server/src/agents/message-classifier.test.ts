@@ -64,4 +64,17 @@ describe("classifyMessageIntent - heuristic fast-path (no LLM needed)", () => {
     );
     expect(result.kind).toBe("task_run");
   });
+
+  it("returns task_run for product-only builds", async () => {
+    const result = await classifyMessageIntent("Build a todo app and push to GitHub", agents);
+    expect(result.kind).toBe("task_run");
+  });
+
+  it("returns graph_design for infrastructure team wording", async () => {
+    const result = await classifyMessageIntent(
+      "Build me a discovery team into a software dev team infrastructure",
+      []
+    );
+    expect(result.kind).toBe("graph_design");
+  });
 });

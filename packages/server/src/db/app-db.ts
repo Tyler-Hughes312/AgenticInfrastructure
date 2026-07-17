@@ -100,12 +100,34 @@ export async function setupAppTables(): Promise<void> {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       graph_config TEXT NOT NULL,
-      source_session_id UUID REFERENCES chat_sessions(id),
+      source_session_id UUID REFERENCES chat_sessions(id) ON DELETE SET NULL,
       agent_count TEXT NOT NULL DEFAULT '0',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Existing DBs may have a RESTRICT FK — migrate to SET NULL.
+  await pool.query(`
+    DO $$
+    DECLARE
+      conname text;
+    BEGIN
+      SELECT tc.constraint_name INTO conname
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+      WHERE tc.table_name = 'saved_graph_templates'
+        AND tc.constraint_type = 'FOREIGN KEY'
+        AND kcu.column_name = 'source_session_id'
+      LIMIT 1;
+      IF conname IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE saved_graph_templates DROP CONSTRAINT %I', conname);
+        ALTER TABLE saved_graph_templates
+          ADD CONSTRAINT saved_graph_templates_source_session_id_fkey
+          FOREIGN KEY (source_session_id) REFERENCES chat_sessions(id) ON DELETE SET NULL;
+      END IF;
+    END $$;
+  `).catch(() => {});
 }
 
 export { schema, sql };

@@ -12,23 +12,15 @@ import {
 import type { RunEvent } from "../../lib/types/run";
 import AgentDebugPanel from "./AgentDebugPanel";
 import CostLatencyPanel from "../CostLatencyPanel";
-import TraceTimeline from "../TraceTimeline";
 
 type RunDebugConsoleProps = {
   events: RunEvent[];
-  shownState: Record<string, unknown>;
-  actualRunId: string | null;
   agentMetaMap: Record<string, AgentMeta>;
 };
 
 const sectionClass = "bg-charcoal-surface rounded-2xl border border-charcoal-border p-4";
 
-export default function RunDebugConsole({
-  events,
-  shownState,
-  actualRunId,
-  agentMetaMap,
-}: RunDebugConsoleProps) {
+export default function RunDebugConsole({ events, agentMetaMap }: RunDebugConsoleProps) {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const workerIds = useMemo(
     () => Object.keys(agentMetaMap).filter((id) => id !== "supervisor"),
@@ -43,7 +35,7 @@ export default function RunDebugConsole({
   const allFiles = useMemo(() => extractFileChanges(events, undefined, workerIds), [events, workerIds]);
 
   const agentIds = useMemo(
-    () => Object.keys(agentMetaMap).length ? Object.keys(agentMetaMap) : Object.keys(attributed),
+    () => (Object.keys(agentMetaMap).length ? Object.keys(agentMetaMap) : Object.keys(attributed)),
     [agentMetaMap, attributed]
   );
 
@@ -152,20 +144,7 @@ export default function RunDebugConsole({
               </ul>
             )}
           </section>
-
-          <section className={`${sectionClass} md:col-span-2`}>
-            <h3 className="text-sm font-semibold mb-3">State snapshot</h3>
-            <pre className="text-xs bg-charcoal-bg p-3 rounded-lg overflow-auto max-h-40 text-charcoal-muted border border-charcoal-border">
-              {JSON.stringify(shownState, null, 2)}
-            </pre>
-          </section>
         </div>
-
-        <section className={sectionClass}>
-          <h3 className="text-sm font-semibold mb-3">Full event stream</h3>
-          <TraceTimeline events={events} />
-          {actualRunId && <p className="text-xs text-charcoal-muted mt-2 font-mono">run: {actualRunId}</p>}
-        </section>
       </div>
     </div>
   );

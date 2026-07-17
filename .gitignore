@@ -4,6 +4,7 @@ dist/
 .env.local
 .workspaces/
 .copilot_token
+.copilot_oauth
 *.log
 .DS_Store
 packages/web/.next/

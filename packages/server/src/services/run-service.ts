@@ -30,7 +30,7 @@ import {
   repoHintFromTask,
   applyGraphChangeFromCommand,
 } from "../agents/design-graph-from-prompt.js";
-import { assertLlmReady, formatLlmError } from "../llm-auth.js";
+import { assertLlmReady, formatLlmError, isLlmAuthError, recoverCopilotAuth } from "../llm-auth.js";
 import { getModel } from "../models-llm.js";
 import { getAppDb } from "../db/app-db.js";
 import { runs, events, projects, chatMessages } from "../db/schema.js";
@@ -644,6 +644,9 @@ async function executeRun(
 
     emit(runId, { type: "run_completed", status: "completed", githubPrUrl, langfuseTraceUrl });
   } catch (err) {
+    if (isLlmAuthError(err)) {
+      await recoverCopilotAuth();
+    }
     const message = formatLlmError(err);
     try {
       await emitChatMessage(runId, message, 0, onAgentLensEvent, chatSessionId);
@@ -1216,6 +1219,9 @@ export async function* streamFollowUpToRun(
 
       emit(runId, { type: "run_completed", status: "completed", githubPrUrl, langfuseTraceUrl });
     } catch (err) {
+      if (isLlmAuthError(err)) {
+        await recoverCopilotAuth();
+      }
       const message = formatLlmError(err);
       push({
         run_id: runId,

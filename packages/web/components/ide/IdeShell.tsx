@@ -61,7 +61,6 @@ function IdeShellContent() {
           filteredEvents={session.filteredEvents}
           shownState={session.shownState}
           computedDiffs={session.computedDiffs}
-          actualRunId={session.actualRunId}
           snapshotsCount={session.snapshots.length}
           replayIndex={session.replayIndex}
           isLive={session.isLive}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { saveGraphTemplate } from "../../app/api-client";
+import { saveGraphTemplate, saveChatSessionGraph } from "../../app/api-client";
 import type { OrchestratorGraphConfig } from "../../lib/types/orchestrator";
 
 type SaveInfrastructureModalProps = {
@@ -42,11 +42,14 @@ export default function SaveInfrastructureModal({
     setSaving(true);
     setError(null);
     try {
+      if (sessionId) {
+        await saveChatSessionGraph(sessionId, config);
+      }
       const saved = await saveGraphTemplate({
         name: trimmed,
         description: description.trim() || undefined,
         sessionId: sessionId ?? undefined,
-        config: sessionId ? undefined : config,
+        config,
       });
       setSuccess(`Saved "${saved.name}" (${saved.agent_count} agents)`);
       onSaved?.(saved.id, saved.name);

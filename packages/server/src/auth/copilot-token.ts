@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "../config.js";
@@ -7,14 +7,15 @@ import { exchangeCopilotToken } from "./copilot.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../../..");
 const TOKEN_CACHE = resolve(REPO_ROOT, ".copilot_token");
+const OAUTH_CACHE = resolve(REPO_ROOT, ".copilot_oauth");
 
 export const COPILOT_AUTH_HELP =
   "GitHub Copilot session token is missing or expired. Refresh it with:\n" +
   "  npm run copilot-login -w @agentic/server\n" +
-  "Then paste the new GITHUB_COPILOT_TOKEN into packages/server/.env and restart the server.\n" +
-  "(A GitHub PAT is used for git push/PR only — it cannot replace the Copilot chat token.)";
+  "This stores GITHUB_COPILOT_OAUTH_TOKEN (refresh) and GITHUB_COPILOT_TOKEN (session).\n" +
+  "(A GitHub PAT with Copilot access can also refresh; repo push still needs GITHUB_TOKEN separately.)";
 
-let cachedFromPat: string | undefined;
+let cachedSession: string | undefined;
 let ignoreEnvCopilotToken = false;
 
 /** Copilot IDE tokens embed exp= as unix seconds (semicolon-delimited). */
@@ -34,17 +35,36 @@ function usableToken(token: string | undefined): string | undefined {
 
 export function invalidateCopilotSession(): void {
   ignoreEnvCopilotToken = true;
-  cachedFromPat = undefined;
+  cachedSession = undefined;
 }
 
-/** Copilot session token from env, PAT exchange cache, or copilot-login file. */
+function readOauthRefreshSource(): string | undefined {
+  const fromEnv = env.GITHUB_COPILOT_OAUTH_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  if (existsSync(OAUTH_CACHE)) {
+    const fromFile = readFileSync(OAUTH_CACHE, "utf-8").trim();
+    if (fromFile) return fromFile;
+  }
+  return env.GITHUB_TOKEN?.trim() || undefined;
+}
+
+function persistSessionToken(token: string): void {
+  cachedSession = token;
+  try {
+    writeFileSync(TOKEN_CACHE, token);
+  } catch {
+    /* best-effort cache */
+  }
+}
+
+/** Copilot session token from env, refresh cache, or copilot-login file. */
 export function getCachedCopilotToken(): string | undefined {
   if (!ignoreEnvCopilotToken) {
     const fromEnv = usableToken(env.GITHUB_COPILOT_TOKEN);
     if (fromEnv) return fromEnv;
   }
-  const fromPat = usableToken(cachedFromPat);
-  if (fromPat) return fromPat;
+  const fromCache = usableToken(cachedSession);
+  if (fromCache) return fromCache;
   if (existsSync(TOKEN_CACHE)) {
     return usableToken(readFileSync(TOKEN_CACHE, "utf-8").trim());
   }
@@ -70,7 +90,24 @@ function formatCopilotExpiry(token: string): string {
   return new Date(Number(match[1]) * 1000).toISOString();
 }
 
-/** Refresh Copilot token when env token is expired; try PAT exchange as a last resort. */
+/** Exchange OAuth/PAT for a fresh session token. Returns true on success. */
+export async function refreshCopilotSession(): Promise<boolean> {
+  const refresh = readOauthRefreshSource();
+  if (!refresh) return false;
+  try {
+    const session = await exchangeCopilotToken(refresh);
+    ignoreEnvCopilotToken = true;
+    persistSessionToken(session);
+    console.log("[copilot] Refreshed Copilot session token.");
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[copilot] Could not refresh Copilot token (${msg}).\n${COPILOT_AUTH_HELP}`);
+    return false;
+  }
+}
+
+/** Refresh when session missing/expired; OAuth first, then GITHUB_TOKEN PAT. */
 export async function warmCopilotTokenFromEnv(): Promise<void> {
   if (getCachedCopilotToken()) return;
 
@@ -82,23 +119,10 @@ export async function warmCopilotTokenFromEnv(): Promise<void> {
     ignoreEnvCopilotToken = true;
   }
 
-  const pat = env.GITHUB_TOKEN?.trim();
-  if (!pat) {
-    if (ignoreEnvCopilotToken) {
+  const ok = await refreshCopilotSession();
+  if (!ok && (ignoreEnvCopilotToken || !getCachedCopilotToken())) {
+    if (!readOauthRefreshSource()) {
       console.error(`[copilot] No valid token.\n${COPILOT_AUTH_HELP}`);
-    }
-    return;
-  }
-
-  try {
-    cachedFromPat = await exchangeCopilotToken(pat);
-    console.log("[copilot] Exchanged GITHUB_TOKEN for Copilot API token.");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (ignoreEnvCopilotToken || !getCachedCopilotToken()) {
-      console.error(
-        `[copilot] Could not refresh Copilot token (${msg}).\n${COPILOT_AUTH_HELP}`
-      );
     }
   }
 }

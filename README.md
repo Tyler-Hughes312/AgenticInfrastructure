@@ -11,12 +11,16 @@ We added a **Runs** page (`/runs`) with optional Langfuse trace links and GitHub
 ## Prerequisites
 
 - Node 18+
-- **Local Postgres** for graph checkpoints (`createdb agent_platform`)
-- **OpenAI API key** for all agent LLM calls (`OPENAI_API_KEY` in repo-root `.env`)
-- GitHub PAT with `repo` scope (when pushing to GitHub)
+- **Local Postgres** for graph checkpoints (`createdb agent_platform` / `npm run setup:db`)
+- **GitHub Copilot** — run `npm run copilot-login -w @agentic/server` (writes OAuth + session tokens). No OpenAI key required.
+- GitHub PAT with `repo` scope (optional — only when pushing to GitHub)
 - `DEFAULT_REPO_URL` in server `.env` (or create a project via API)
 
-**Optional:** Langfuse tracing — set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` (cloud or self-hosted). The app runs fine without them.
+**Copilot setup (recommended):** see [docs/COPILOT-SETUP.md](docs/COPILOT-SETUP.md) — or run `npm run setup:copilot` then `npm run setup:copilot -- --login`.
+
+**Enterprise Windows (locked-down PCs):** see [docs/ENTERPRISE-WINDOWS.md](docs/ENTERPRISE-WINDOWS.md) — local Postgres only, no Docker, proxy/CA, IT allowlist, `npm run doctor`.
+
+**Optional:** OpenAI (`OPENAI_API_KEY`) for `openai:` models / embeddings. Langfuse tracing — set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`. The app runs fine without them.
 
 ## Quick start
 
@@ -26,21 +30,27 @@ cp packages/web/.env.example packages/web/.env.local
 # edit packages/server/.env — see Database section below
 
 npm install
+npm run copilot-login -w @agentic/server   # device login → Copilot tokens
+npm run doctor      # checks Node, Postgres, ports, keys
+npm run setup:db   # creates agent_platform if missing
 
-# Terminal 1 — API (port 8000)
-npm run dev:server
-
-# Terminal 2 — AgentLens UI (port 5173)
-npm run dev:web
+# API + UI (Windows-safe; or use two terminals)
+npm run dev
+# or:
+#   npm run dev:server   # port 8000
+#   npm run dev:web      # port 5173
 ```
 
-Open http://localhost:5173 — home page to start a run, `/runs` for the monitoring table.
+Open http://127.0.0.1:5173 — home page to start a run, `/runs` for the monitoring table.
 
 ## Database
 
-Use a **local Postgres** instance (Homebrew, Postgres.app, etc.). No Docker required.
+**Local Postgres only** (Homebrew, Postgres.app, etc.). This project does **not** use Docker for the database or anything else.
 
 ```bash
+# Homebrew example
+brew install postgresql@15
+brew services start postgresql@15
 createdb agent_platform
 ```
 
@@ -51,7 +61,9 @@ DATABASE_URL=postgresql://YOUR_MAC_USERNAME@localhost:5432/agent_platform
 MEMORY_STORE=inmemory
 ```
 
-`MEMORY_STORE=inmemory` keeps long-term agent memory in-process — simplest for local dev. For Postgres-backed semantic memory, install the `vector` extension and set `MEMORY_STORE=postgres`:
+Do not point `DATABASE_URL` at Docker containers (e.g. port `5433` or `postgres:postgres@...`).
+
+`MEMORY_STORE=inmemory` keeps long-term agent memory in-process — simplest for local dev. Graph checkpoints and app tables still use local Postgres. For Postgres-backed semantic memory, install the `vector` extension on your local DB and set `MEMORY_STORE=postgres`:
 
 ```bash
 psql agent_platform -c 'CREATE EXTENSION IF NOT EXISTS vector;'

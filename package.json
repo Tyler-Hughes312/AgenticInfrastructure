@@ -5,11 +5,17 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @agentic/server & npm run dev -w @agentic/web",
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev -w @agentic/server\" \"npm run dev -w @agentic/web\"",
     "dev:server": "npm run dev -w @agentic/server",
     "dev:web": "npm run dev -w @agentic/web",
     "build": "npm run build -w @agentic/server && npm run build -w @agentic/web",
-    "test": "npm run test -w @agentic/server"
+    "test": "npm run test -w @agentic/server",
+    "doctor": "npm run doctor -w @agentic/server",
+    "setup:db": "npm run setup:db -w @agentic/server",
+    "setup:copilot": "npm run setup:copilot -w @agentic/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   },
   "engines": {
     "node": ">=18"

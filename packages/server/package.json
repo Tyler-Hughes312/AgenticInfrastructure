@@ -8,6 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
+    "doctor": "tsx scripts/doctor.ts",
+    "setup:db": "tsx scripts/setup-db.ts",
+    "setup:copilot": "tsx scripts/setup-copilot.ts",
     "copilot-login": "tsx src/auth/copilot-cli.ts"
   },
   "dependencies": {

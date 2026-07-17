@@ -69,13 +69,14 @@ export async function graphTemplateRoutes(app: FastifyInstance) {
     let config: OrchestratorGraphConfig;
     let sourceSessionId: string | undefined;
 
-    if (body.session_id) {
+    if (body.config) {
+      config = normalizeOrchestratorConfig(body.config as OrchestratorGraphConfig);
+      sourceSessionId = body.session_id;
+    } else if (body.session_id) {
       const session = await getChatSession(body.session_id);
       if (!session) return reply.code(404).send({ error: "Chat session not found" });
       config = session.graphConfig;
       sourceSessionId = body.session_id;
-    } else if (body.config) {
-      config = normalizeOrchestratorConfig(body.config as OrchestratorGraphConfig);
     } else {
       return reply.code(400).send({ error: "Provide config or session_id" });
     }

@@ -121,8 +121,7 @@ export async function classifyMessageIntent(
       if (looksLikeProductDeliverable(trimmed) && looksLikePipelineTask(trimmed)) {
         return { kind: "task_run" };
       }
-      if (isTeamStructureOnly(trimmed, agents.length)) return { kind: "graph_design" };
-      return { kind: "q_and_a" };
+      return { kind: "graph_design" };
     }
 
     if (intent === "graph_edit") {
